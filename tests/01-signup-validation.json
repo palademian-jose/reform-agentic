@@ -1,0 +1,14 @@
+{
+  "goal": "Attempt sign up with missing required data and verify the validation error appears",
+  "browserActions": [
+    { "kind": "goto", "target": "/" },
+    { "kind": "fill", "target": "label:Full name", "value": "Jamie Torres" },
+    { "kind": "fill", "target": "label:School email", "value": "jamie@school.edu" },
+    { "kind": "click", "target": "role:button:Sign Up" },
+    { "kind": "wait_for_text", "target": "text:Missing required field `name`." }
+  ],
+  "regressionChecks": [
+    { "path": "/", "expectText": "Create account" },
+    { "path": "/dashboard", "expectText": "Welcome to the dashboard" }
+  ]
+}

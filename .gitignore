@@ -1,0 +1,4 @@
+.env
+.env.*
+agent/runtime/
+dashboard/public/runtime/

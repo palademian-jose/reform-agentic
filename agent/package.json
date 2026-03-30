@@ -1,0 +1,23 @@
+{
+  "name": "@reform/agent",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file=../.env --import tsx src/runGoal.ts",
+    "start": "node --env-file=../.env --import tsx src/runGoal.ts",
+    "server": "node --env-file=../.env --import tsx src/server.ts",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@reform/shared": "0.0.1",
+    "playwright": "^1.53.1",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

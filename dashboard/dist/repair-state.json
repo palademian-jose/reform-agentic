@@ -1,0 +1,62 @@
+{
+  "run": {
+    "id": "run_1774715857588",
+    "goal": "Sign up and reach dashboard",
+    "expectedOutcome": "Primary flow succeeds and regression checks stay healthy.",
+    "stage": "needs_review",
+    "summary": "Waiting for the browser run to begin.",
+    "retryCount": 0,
+    "maxRetries": 2
+  },
+  "config": {
+    "goal": "Sign up and reach dashboard",
+    "projectRoot": "/home/deimos/Projects/mandax-web",
+    "appUrl": "http://127.0.0.1:5192",
+    "requireApproval": true,
+    "model": "glm-4.7",
+    "browserActions": [
+      {
+        "kind": "goto",
+        "target": "/"
+      },
+      {
+        "kind": "hover",
+        "target": "a"
+      },
+      {
+        "kind": "click",
+        "target": "a"
+      },
+      {
+        "kind": "wait_for_url",
+        "target": "/"
+      }
+    ],
+    "regressionChecks": [
+      {
+        "path": "/"
+      }
+    ]
+  },
+  "stage": "needs_review",
+  "timestamp": "2026-03-28T16:37:38.867Z",
+  "detail": "The repair loop hit a blocker and needs review.",
+  "evidence": {
+    "consoleErrors": [
+      "Error: locator.hover: Error: strict mode violation: locator('a') resolved to 35 elements:\n    1) <a href=\"/\" title=\"Mandax\" data-qwik-inspector=\"/src/components/layout/Sidebar.tsx:114:7\" class=\"flex items-center justify-center w-full mb-6 px-3 shrink-0\">…</a> aka getByRole('link', { name: 'Mandax' })\n    2) <a href=\"/\" title=\"Home\" q:key=\"home\" data-qwik-inspector=\"/src/components/layout/Sidebar.tsx:137:13\" class=\"relative flex items-center justify-center rounded-xl h-10 w-[77px] transition-all duration-150\">…</a> aka getByRole('link', { name: 'Home' })\n    3) <a href=\"/explore\" title=\"Explore\" q:key=\"explore\" data-qwik-inspector=\"/src/components/layout/Sidebar.tsx:137:13\" class=\"relative flex items-center justify-center rounded-xl h-10 w-[77px] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-secondary)]\">…</a> aka getByRole('link', { name: 'Explore', exact: true })\n    4) <a href=\"/library\" title=\"Library\" q:key=\"library\" data-qwik-inspector=\"/src/components/layout/Sidebar.tsx:137:13\" class=\"relative flex items-center justify-center rounded-xl h-10 w-[77px] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-secondary)]\">…</a> aka getByRole('link', { name: 'Library' })\n    5) <a href=\"/community\" title=\"Community\" q:key=\"community\" data-qwik-inspector=\"/src/components/layout/Sidebar.tsx:137:13\" class=\"relative flex items-center justify-center rounded-xl h-10 w-[77px] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-secondary)]\">…</a> aka getByRole('link', { name: 'Community' })\n    6) <a q:key=\"manga\" href=\"/category/manga\" class=\"group hover-lift\" data-qwik-inspector=\"/src/components/home/CategoryCards.tsx:124:11\">…</a> aka getByRole('link', { name: 'Manga Stories, panels, and' })\n    7) <a q:key=\"illustrations\" class=\"group hover-lift\" href=\"/category/illustrations\" data-qwik-inspector=\"/src/components/home/CategoryCards.tsx:124:11\">…</a> aka getByRole('link', { name: 'Illustration Single-frame' })\n    8) <a q:key=\"graphics\" class=\"group hover-lift\" href=\"/category/graphics\" data-qwik-inspector=\"/src/components/home/CategoryCards.tsx:124:11\">…</a> aka getByRole('link', { name: 'Graphics Bold shapes, visuals' })\n    9) <a q:key=\"oneshot\" href=\"/category/oneshot\" class=\"group hover-lift\" data-qwik-inspector=\"/src/components/home/CategoryCards.tsx:124:11\">…</a> aka getByRole('link', { name: 'One Shot Standalone' })\n    10) <a href=\"/for-you\" q:key=\"see-all\" draggable=\"false\" data-qwik-inspector=\"/src/components/home/ForYouSection.tsx:79:5\" class=\"hover:border-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)]\">…</a> aka getByRole('link', { name: 'See all', exact: true })\n    ...\n\nCall log:\n\u001b[2m  - waiting for locator('a')\u001b[22m\n"
+    ],
+    "networkFailures": [],
+    "domNotes": []
+  },
+  "patch": {
+    "filePath": "",
+    "reason": "",
+    "diffSummary": ""
+  },
+  "screenshots": {
+    "beforePath": "",
+    "afterPath": ""
+  },
+  "pendingPatch": null,
+  "regressions": []
+}

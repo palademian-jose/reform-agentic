@@ -1,0 +1,21 @@
+{
+  "name": "reform",
+  "private": true,
+  "version": "0.0.1",
+  "description": "AI browser testing and self-repair tool for web apps",
+  "bin": {
+    "reform": "./scripts/reform-cli.mjs"
+  },
+  "workspaces": [
+    "dashboard",
+    "agent",
+    "sandbox-app",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "echo \"Run workspace-specific dev commands after installing dependencies.\"",
+    "demo": "./scripts/launch-demo.sh",
+    "cli": "node ./scripts/reform-cli.mjs",
+    "test": "echo \"Tests not wired yet.\""
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "run": {
+    "id": "run_1774896370652",
+    "goal": "Sign up and reach dashboard",
+    "expectedOutcome": "Primary flow succeeds and regression checks stay healthy.",
+    "stage": "observing",
+    "summary": "Waiting for the browser run to begin.",
+    "retryCount": 0,
+    "maxRetries": 3
+  },
+  "config": {
+    "goal": "Sign up and reach dashboard",
+    "projectRoot": "/home/deimos/Projects/mandax-web",
+    "appUrl": "http://127.0.0.1:5173",
+    "requireApproval": true,
+    "model": "glm-4.7",
+    "visualPlayback": {
+      "headless": false,
+      "showCursor": true,
+      "moveDurationMs": 350,
+      "actionDelayMs": 120
+    },
+    "browserActions": [
+      {
+        "kind": "goto",
+        "target": "/"
+      },
+      {
+        "kind": "click",
+        "target": "button"
+      }
+    ],
+    "regressionChecks": [
+      {
+        "path": "/"
+      }
+    ]
+  },
+  "stage": "observing",
+  "timestamp": "",
+  "detail": "Waiting for the agent to start the flow.",
+  "evidence": {
+    "consoleErrors": [],
+    "networkFailures": [],
+    "domNotes": []
+  },
+  "patch": {
+    "filePath": "",
+    "reason": "",
+    "diffSummary": ""
+  },
+  "screenshots": {
+    "beforePath": "",
+    "afterPath": ""
+  },
+  "pendingPatch": null,
+  "regressions": []
+}
