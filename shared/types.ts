@@ -25,6 +25,20 @@ export interface BrowserAction {
   value?: string;
 }
 
+export interface FlowReplaySnapshot {
+  id: string;
+  label: string;
+  startUrl: string;
+  browserActions: BrowserAction[];
+  regressionChecks: RegressionCheck[];
+  capturedAt: string;
+  currentActionIndex: number | null;
+  failingActionIndex: number | null;
+  failingAction: BrowserAction | null;
+  finalUrl: string;
+  failureReason: string | null;
+}
+
 export interface RegressionCheck {
   path: string;
   expectText?: string;
@@ -37,11 +51,15 @@ export interface VisualPlaybackConfig {
   actionDelayMs: number;
 }
 
+export type LlmProvider = "openrouter" | "zai" | "openai";
+
 export interface RunConfig {
   goal: string;
   projectRoot: string;
   appUrl: string;
   requireApproval: boolean;
+  llmProvider: LlmProvider;
+  llmFallbackProvider: LlmProvider | null;
   model: string;
   visualPlayback: VisualPlaybackConfig;
   browserActions: BrowserAction[];
@@ -111,6 +129,7 @@ export interface RepairStateSnapshot {
   stage: RepairStage;
   timestamp: string;
   detail: string;
+  primaryFlow?: FlowReplaySnapshot | null;
   evidence: EvidenceSummary;
   patch: PatchSummary;
   screenshots: ScreenshotSummary;

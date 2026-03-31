@@ -10,7 +10,9 @@ export const defaultRunConfig: RunConfig = {
   projectRoot: path.join(rootDir, "sandbox-app"),
   appUrl: process.env.REFORM_APP_URL ?? "http://127.0.0.1:4173",
   requireApproval: true,
-  model: process.env.REFORM_LLM_MODEL ?? process.env.REFORM_OPENAI_MODEL ?? "glm-5-turbo",
+  llmProvider: (process.env.REFORM_LLM_PROVIDER ?? "openrouter") as RunConfig["llmProvider"],
+  llmFallbackProvider: "zai",
+  model: process.env.REFORM_LLM_MODEL ?? process.env.REFORM_OPENROUTER_MODEL ?? "x-ai/grok-4.20-beta",
   visualPlayback: {
     headless: true,
     showCursor: false,
@@ -44,6 +46,11 @@ export function normalizeRunConfig(input?: Partial<RunConfig>): RunConfig {
 
   return {
     ...merged,
+    llmProvider: merged.llmProvider || defaultRunConfig.llmProvider,
+    llmFallbackProvider:
+      typeof merged.llmFallbackProvider === "undefined"
+        ? defaultRunConfig.llmFallbackProvider
+        : merged.llmFallbackProvider,
     projectRoot: path.resolve(merged.projectRoot),
   };
 }

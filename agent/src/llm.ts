@@ -3,6 +3,7 @@ import type {
   ElementDescriptor,
   EvidenceSummary,
   FrameworkInfo,
+  LlmProvider,
   ProposedFilePatch,
   RegressionCheck,
   RunConfig,
@@ -361,16 +362,180 @@ async function requestZai(input: {
   return extractChatOutputText(payload);
 }
 
+async function requestOpenRouter(input: {
+  config: RunConfig;
+  evidence: EvidenceSummary;
+  candidateFiles: FileContext[];
+  currentUrl: string;
+}) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("OPENROUTER_API_KEY is not set.");
+  }
+
+  const prompt = buildPrompt(input);
+  const timeoutMs = Number(process.env.REFORM_LLM_TIMEOUT_MS ?? "180000");
+
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: input.config.model,
+      temperature: 0.1,
+      messages: [
+        {
+          role: "system",
+          content: prompt.system,
+        },
+        {
+          role: "user",
+          content: prompt.user,
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenRouter request failed with ${response.status}: ${errorText}`);
+  }
+
+  const payload = await response.json();
+  return extractChatOutputText(payload);
+}
+
+function getProviderSequence(config: RunConfig) {
+  const primary = (config.llmProvider || "openrouter").toLowerCase() as LlmProvider;
+  const fallback = config.llmFallbackProvider
+    ? (config.llmFallbackProvider.toLowerCase() as LlmProvider)
+    : null;
+
+  return fallback && fallback !== primary ? [primary, fallback] : [primary];
+}
+
+async function requestWithProvider(
+  provider: LlmProvider,
+  input: {
+    config: RunConfig;
+    evidence: EvidenceSummary;
+    candidateFiles: FileContext[];
+    currentUrl: string;
+  },
+) {
+  if (provider === "zai") {
+    return await requestZai(input);
+  }
+
+  if (provider === "openrouter") {
+    return await requestOpenRouter(input);
+  }
+
+  return await requestOpenAI(input);
+}
+
+async function requestElementEditWithProvider(
+  provider: LlmProvider,
+  input: {
+    config: RunConfig;
+    system: string;
+    user: string;
+  },
+) {
+  const timeoutMs = Number(process.env.REFORM_LLM_TIMEOUT_MS ?? "180000");
+
+  if (provider === "zai") {
+    const apiKey = process.env.ZAI_API_KEY;
+    const baseUrl = process.env.ZAI_API_BASE_URL ?? "https://api.z.ai/api/coding/paas/v4";
+    if (!apiKey) throw new Error("ZAI_API_KEY is not set.");
+
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: input.config.model,
+        temperature: 0.1,
+        messages: [
+          { role: "system", content: input.system },
+          { role: "user", content: input.user },
+        ],
+      }),
+    });
+    if (!response.ok) throw new Error(`z.ai request failed with ${response.status}.`);
+    const payload = await response.json();
+    return extractChatOutputText(payload);
+  }
+
+  if (provider === "openrouter") {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set.");
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: input.config.model,
+        temperature: 0.1,
+        messages: [
+          { role: "system", content: input.system },
+          { role: "user", content: input.user },
+        ],
+      }),
+    });
+    if (!response.ok) throw new Error(`OpenRouter request failed with ${response.status}.`);
+    const payload = await response.json();
+    return extractChatOutputText(payload);
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set.");
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: input.config.model,
+      instructions: input.system,
+      input: input.user,
+    }),
+  });
+  if (!response.ok) throw new Error(`OpenAI request failed with ${response.status}.`);
+  const payload = await response.json();
+  return extractOpenAIOutputText(payload);
+}
+
 export async function proposePatchWithLlm(input: {
   config: RunConfig;
   evidence: EvidenceSummary;
   candidateFiles: FileContext[];
   currentUrl: string;
 }) {
-  const provider = (process.env.REFORM_LLM_PROVIDER ?? "openai").toLowerCase();
+  const providers = getProviderSequence(input.config);
+  let outputText = "";
+  let lastError: unknown = null;
 
-  const outputText =
-    provider === "zai" ? await requestZai(input) : await requestOpenAI(input);
+  for (const provider of providers) {
+    try {
+      outputText = await requestWithProvider(provider, input);
+      break;
+    } catch (error) {
+      lastError = error;
+      if (provider === providers[providers.length - 1]) {
+        throw error;
+      }
+    }
+  }
+
+  if (!outputText && lastError) {
+    throw lastError;
+  }
 
   const parsed = parseProposalResponse(outputText);
 
@@ -443,49 +608,28 @@ export async function proposeElementEditWithLlm(input: {
     },
   };
 
-  const provider = (process.env.REFORM_LLM_PROVIDER ?? "openai").toLowerCase();
-  const timeoutMs = Number(process.env.REFORM_LLM_TIMEOUT_MS ?? "180000");
+  const providers = getProviderSequence(input.config);
+  let outputText = "";
+  let lastError: unknown = null;
 
-  let outputText: string;
+  for (const provider of providers) {
+    try {
+      outputText = await requestElementEditWithProvider(provider, {
+        config: input.config,
+        system,
+        user: JSON.stringify(user),
+      });
+      break;
+    } catch (error) {
+      lastError = error;
+      if (provider === providers[providers.length - 1]) {
+        throw error;
+      }
+    }
+  }
 
-  if (provider === "zai") {
-    const apiKey = process.env.ZAI_API_KEY;
-    const baseUrl = process.env.ZAI_API_BASE_URL ?? "https://api.z.ai/api/coding/paas/v4";
-    if (!apiKey) throw new Error("ZAI_API_KEY is not set.");
-
-    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: input.config.model,
-        temperature: 0.1,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: JSON.stringify(user) },
-        ],
-      }),
-    });
-    if (!response.ok) throw new Error(`z.ai request failed with ${response.status}.`);
-    const payload = await response.json();
-    outputText = extractChatOutputText(payload);
-  } else {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY is not set.");
-
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: input.config.model,
-        instructions: system,
-        input: JSON.stringify(user),
-      }),
-    });
-    if (!response.ok) throw new Error(`OpenAI request failed with ${response.status}.`);
-    const payload = await response.json();
-    outputText = extractOpenAIOutputText(payload);
+  if (!outputText && lastError) {
+    throw lastError;
   }
 
   const parsed = parseProposalResponse(outputText);

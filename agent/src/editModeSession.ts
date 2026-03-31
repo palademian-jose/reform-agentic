@@ -57,26 +57,39 @@ export async function applyPatches(proposalId: string): Promise<void> {
     throw new Error(`No session or proposal found for ${proposalId}.`);
   }
 
+  const patchesByFile = new Map<string, typeof session.proposal.patches>();
   for (const patch of session.proposal.patches) {
     const absolutePath = path.isAbsolute(patch.filePath)
       ? patch.filePath
       : path.join(session.projectRoot, patch.filePath);
+    const existing = patchesByFile.get(absolutePath);
+    if (existing) {
+      existing.push(patch);
+    } else {
+      patchesByFile.set(absolutePath, [patch]);
+    }
+  }
 
-    // Find the snapshot taken at proposal time
+  for (const [absolutePath, patches] of patchesByFile) {
     const backup = session.backups.find((b) => b.absolutePath === absolutePath);
     if (!backup) {
-      throw new Error(`No file snapshot found for ${patch.filePath}. This should not happen — report as a bug.`);
+      const relativePath = path.isAbsolute(absolutePath)
+        ? path.relative(session.projectRoot, absolutePath) || absolutePath
+        : absolutePath;
+      throw new Error(`No file snapshot found for ${relativePath}. This should not happen — report as a bug.`);
     }
 
-    // Apply patch against the snapshot, not the live file
-    if (!backup.originalContent.includes(patch.before)) {
-      throw new Error(
-        `Patch mismatch in ${patch.filePath}: the "before" snippet does not match the file snapshot. The LLM may have generated an incorrect patch.`,
-      );
+    let nextContent = backup.originalContent;
+    for (const patch of patches) {
+      if (!nextContent.includes(patch.before)) {
+        throw new Error(
+          `Patch mismatch in ${patch.filePath}: the "before" snippet does not match the file snapshot. The LLM may have generated an incorrect patch.`,
+        );
+      }
+      nextContent = nextContent.replace(patch.before, patch.after);
     }
 
-    const patched = backup.originalContent.replace(patch.before, patch.after);
-    await writeFile(absolutePath, patched, "utf8");
+    await writeFile(absolutePath, nextContent, "utf8");
   }
 
   session.status = "applied";

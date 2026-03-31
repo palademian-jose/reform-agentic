@@ -7,6 +7,7 @@ import type {
   BrowserAction,
   EvidenceSummary,
   GoalRun,
+  FlowReplaySnapshot,
   PatchSummary,
   PendingPatch,
   RegressionCheck,
@@ -65,6 +66,7 @@ interface FlowCaptureResult {
   evidence: EvidenceSummary;
   primaryFlowPassed: boolean;
   failureDetail?: string;
+  flow: FlowReplaySnapshot;
 }
 
 function createLog(level: AgentLogEntry["level"], message: string): AgentLogEntry {
@@ -95,6 +97,7 @@ function createInitialSnapshot(config: RunConfig): RepairStateSnapshot {
     stage: "observing",
     timestamp: "",
     detail: "Waiting for the agent to start the flow.",
+    primaryFlow: null,
     evidence: emptyEvidence,
     patch: emptyPatch,
     screenshots: emptyScreenshots,
@@ -126,6 +129,7 @@ async function emitStage(
     screenshots?: ScreenshotSummary;
     pendingPatch?: PendingPatch | null;
     regressions?: RegressionResult[];
+    primaryFlow?: FlowReplaySnapshot | null;
   },
 ) {
   const snapshot: RepairStateSnapshot = {
@@ -134,6 +138,7 @@ async function emitStage(
     stage,
     timestamp: new Date().toISOString(),
     detail,
+    primaryFlow: options?.primaryFlow ?? null,
     evidence: options?.evidence ?? emptyEvidence,
     patch: options?.patch ?? emptyPatch,
     screenshots: options?.screenshots ?? emptyScreenshots,
@@ -171,6 +176,37 @@ function resolveLocator(page: Page, target: string) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createFlowSnapshot(
+  config: RunConfig,
+  options: {
+    currentActionIndex: number | null;
+    failingActionIndex: number | null;
+    failingAction: BrowserAction | null;
+    finalUrl: string;
+    failureReason: string | null;
+    capturedAt?: string;
+  },
+): FlowReplaySnapshot {
+  const startAction = config.browserActions.find((action) => action.kind === "goto") || config.browserActions[0] || null;
+  const startUrl = startAction?.kind === "goto"
+    ? new URL(startAction.target, config.appUrl).toString()
+    : config.appUrl;
+
+  return {
+    id: `flow_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    label: config.goal,
+    startUrl,
+    browserActions: config.browserActions.map((action) => ({ ...action })),
+    regressionChecks: config.regressionChecks.map((check) => ({ ...check })),
+    capturedAt: options.capturedAt || new Date().toISOString(),
+    currentActionIndex: options.currentActionIndex,
+    failingActionIndex: options.failingActionIndex,
+    failingAction: options.failingAction ? { ...options.failingAction } : null,
+    finalUrl: options.finalUrl,
+    failureReason: options.failureReason,
+  };
 }
 
 async function ensurePlaybackCursor(page: Page) {
@@ -265,13 +301,28 @@ async function moveMouseToLocator(page: Page, locator: Locator, config: RunConfi
   return point;
 }
 
-async function runBrowserActions(page: Page, appUrl: string, actions: BrowserAction[], config: RunConfig) {
-  for (const action of actions) {
+interface BrowserActionExecutionHooks {
+  onActionStart?: (index: number, action: BrowserAction) => void;
+  onActionComplete?: (index: number, action: BrowserAction) => void;
+}
+
+async function runBrowserActions(
+  page: Page,
+  appUrl: string,
+  actions: BrowserAction[],
+  config: RunConfig,
+  hooks: BrowserActionExecutionHooks = {},
+) {
+  for (let index = 0; index < actions.length; index += 1) {
+    const action = actions[index];
+    hooks.onActionStart?.(index, action);
+
     if (action.kind === "goto") {
       await page.goto(new URL(action.target, appUrl).toString(), { waitUntil: "networkidle" });
       if (config.visualPlayback.showCursor) {
         await ensurePlaybackCursor(page);
       }
+      hooks.onActionComplete?.(index, action);
       continue;
     }
 
@@ -291,11 +342,13 @@ async function runBrowserActions(page: Page, appUrl: string, actions: BrowserAct
           await setPlaybackCursorPosition(page, point, true);
           await page.mouse.click(point.x, point.y, { delay: config.visualPlayback.actionDelayMs });
           await setPlaybackCursorPosition(page, point, false);
+          hooks.onActionComplete?.(index, action);
           continue;
         }
       }
 
       await locator.click();
+      hooks.onActionComplete?.(index, action);
       continue;
     }
 
@@ -306,21 +359,25 @@ async function runBrowserActions(page: Page, appUrl: string, actions: BrowserAct
         const point = await moveMouseToLocator(page, locator, config);
         if (point) {
           await sleep(config.visualPlayback.actionDelayMs);
+          hooks.onActionComplete?.(index, action);
           continue;
         }
       }
 
       await locator.hover();
+      hooks.onActionComplete?.(index, action);
       continue;
     }
 
     if (action.kind === "wait_for_text") {
       await resolveLocator(page, action.target).waitFor({ state: "visible", timeout: 3000 });
+      hooks.onActionComplete?.(index, action);
       continue;
     }
 
     if (action.kind === "wait_for_url") {
       await page.waitForURL(new RegExp(action.target), { timeout: 3000 });
+      hooks.onActionComplete?.(index, action);
     }
   }
 }
@@ -328,6 +385,8 @@ async function runBrowserActions(page: Page, appUrl: string, actions: BrowserAct
 async function captureEvidence(page: Page, config: RunConfig): Promise<FlowCaptureResult> {
   const consoleErrors: string[] = [];
   const requestFailures: string[] = [];
+  let currentActionIndex: number | null = null;
+  let currentAction: BrowserAction | null = null;
 
   page.on("console", (message: ConsoleMessage) => {
     if (message.type() === "error") {
@@ -343,7 +402,15 @@ async function captureEvidence(page: Page, config: RunConfig): Promise<FlowCaptu
   let failureDetail: string | undefined;
 
   try {
-    await runBrowserActions(page, config.appUrl, config.browserActions, config);
+    await runBrowserActions(page, config.appUrl, config.browserActions, config, {
+      onActionStart: (index, action) => {
+        currentActionIndex = index;
+        currentAction = action;
+      },
+      onActionComplete: (index) => {
+        currentActionIndex = index;
+      },
+    });
   } catch (error) {
     primaryFlowPassed = false;
     failureDetail = error instanceof Error ? error.message : "Primary flow failed.";
@@ -354,6 +421,13 @@ async function captureEvidence(page: Page, config: RunConfig): Promise<FlowCaptu
   return {
     primaryFlowPassed,
     failureDetail,
+    flow: createFlowSnapshot(config, {
+      currentActionIndex,
+      failingActionIndex: primaryFlowPassed ? null : currentActionIndex,
+      failingAction: primaryFlowPassed ? null : currentAction,
+      finalUrl: page.url(),
+      failureReason: failureDetail ?? null,
+    }),
     evidence: {
       consoleErrors,
       networkFailures: requestFailures,
@@ -413,6 +487,7 @@ async function driveRepairFromEvidence(
   currentUrl: string,
   hooks: RepairLoopHooks,
   screenshots: ScreenshotSummary,
+  primaryFlow?: FlowReplaySnapshot | null,
 ) {
   await emitStage(
     config,
@@ -423,6 +498,7 @@ async function driveRepairFromEvidence(
     {
       evidence,
       screenshots,
+      primaryFlow: primaryFlow ?? null,
     },
   );
 
@@ -438,6 +514,7 @@ async function driveRepairFromEvidence(
     {
       evidence,
       screenshots,
+      primaryFlow: primaryFlow ?? null,
     },
   );
 
@@ -475,6 +552,7 @@ async function driveRepairFromEvidence(
       patch: patchSummary,
       screenshots,
       pendingPatch,
+      primaryFlow: primaryFlow ?? null,
     },
   );
 
@@ -492,6 +570,7 @@ async function driveRepairFromEvidence(
         patch: patchSummary,
         screenshots,
         pendingPatch,
+        primaryFlow: primaryFlow ?? null,
       },
     );
 
@@ -510,6 +589,7 @@ async function driveRepairFromEvidence(
         patch: patchSummary,
         screenshots,
         pendingPatch,
+        primaryFlow: primaryFlow ?? null,
       },
     );
     return { continued: false, patchSummary: null, regressionChecks: proposal.regressionChecks };
@@ -524,16 +604,17 @@ async function driveRepairFromEvidence(
     "applying_fix",
     "Applying approved edits to the target project.",
     hooks,
-    {
-      evidence,
-      patch: {
-        ...patchSummary,
-        diffSummary: appliedEdits.map((edit) => edit.reason).join(" | "),
+      {
+        evidence,
+        patch: {
+          ...patchSummary,
+          diffSummary: appliedEdits.map((edit) => edit.reason).join(" | "),
+        },
+        screenshots,
+        pendingPatch,
+        primaryFlow: primaryFlow ?? null,
       },
-      screenshots,
-      pendingPatch,
-    },
-  );
+    );
   return {
     continued: true,
     patchSummary,
@@ -559,6 +640,13 @@ export async function runRepairFromLocalFailure(input?: LocalEscalationInput, ho
     networkFailures: [],
     domNotes: [detail],
   };
+  const primaryFlow = createFlowSnapshot(config, {
+    currentActionIndex: 0,
+    failingActionIndex: null,
+    failingAction: null,
+    finalUrl: input?.localCurrentUrl ?? config.appUrl,
+    failureReason: detail,
+  });
 
   await emitStage(
     config,
@@ -568,6 +656,7 @@ export async function runRepairFromLocalFailure(input?: LocalEscalationInput, ho
     hooks,
     {
       evidence,
+      primaryFlow,
     },
   );
 
@@ -587,6 +676,7 @@ export async function runRepairFromLocalFailure(input?: LocalEscalationInput, ho
       input?.localCurrentUrl ?? config.appUrl,
       hooks,
       { beforePath: "", afterPath: "" },
+      primaryFlow,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown agent failure.";
@@ -603,6 +693,7 @@ export async function runRepairFromLocalFailure(input?: LocalEscalationInput, ho
           consoleErrors: [...evidence.consoleErrors, message],
           domNotes: [...evidence.domNotes, `Overlay failure reason: ${detail}`],
         },
+        primaryFlow,
       },
     );
     return;
@@ -625,6 +716,7 @@ export async function runRepairFromLocalFailure(input?: LocalEscalationInput, ho
       },
       patch: localResult.patchSummary,
       screenshots: { beforePath: "", afterPath: "" },
+      primaryFlow,
     },
   );
 }
@@ -634,6 +726,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
   await ensureProjectRoot(config.projectRoot);
   const run = createRun(config);
   const keepVisualBrowserOpen = config.visualPlayback.showCursor && !config.visualPlayback.headless;
+  let primaryFlow: FlowReplaySnapshot | null = null;
 
   await emitStage(config, run, "observing", "Opening the app and executing the configured browser flow.", hooks);
 
@@ -645,6 +738,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
     const page = await browser.newPage();
     const flowCapture = await captureEvidence(page, config);
     let evidence = flowCapture.evidence;
+    primaryFlow = flowCapture.flow;
     const beforePath = await captureScreenshot(page, "before-repair.png");
     run.retryCount = 1;
 
@@ -657,6 +751,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
       {
         evidence,
         screenshots: { beforePath, afterPath: "" },
+        primaryFlow,
       },
     );
 
@@ -674,6 +769,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
         {
           evidence,
           screenshots: { beforePath, afterPath: beforePath },
+          primaryFlow,
         },
       );
 
@@ -692,6 +788,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
           evidence,
           screenshots: { beforePath, afterPath: beforePath },
           regressions,
+          primaryFlow,
         },
       );
       return;
@@ -707,6 +804,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
         page.url(),
         hooks,
         { beforePath: currentBeforePath, afterPath: "" },
+        primaryFlow,
       );
 
       if (!repairResult.continued || !repairResult.patchSummary) {
@@ -725,6 +823,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
           evidence,
           patch: repairResult.patchSummary,
           screenshots: { beforePath: currentBeforePath, afterPath: "" },
+          primaryFlow,
         },
       );
 
@@ -740,11 +839,13 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
           evidence,
           patch: repairResult.patchSummary,
           screenshots: { beforePath: currentBeforePath, afterPath: "" },
+          primaryFlow,
         },
       );
 
       const replayCapture = await captureEvidence(page, config);
       evidence = replayCapture.evidence;
+      primaryFlow = replayCapture.flow;
       const afterPath = await captureScreenshot(page, "after-repair.png");
 
       if (replayCapture.primaryFlowPassed) {
@@ -758,6 +859,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
             evidence,
             patch: repairResult.patchSummary,
             screenshots: { beforePath: currentBeforePath, afterPath },
+            primaryFlow,
           },
         );
 
@@ -779,6 +881,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
             patch: repairResult.patchSummary,
             screenshots: { beforePath: currentBeforePath, afterPath },
             regressions,
+            primaryFlow,
           },
         );
         return;
@@ -795,6 +898,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
             evidence,
             patch: repairResult.patchSummary,
             screenshots: { beforePath: currentBeforePath, afterPath },
+            primaryFlow,
           },
         );
         return;
@@ -812,6 +916,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
           evidence,
           patch: lastPatchSummary,
           screenshots: { beforePath: currentBeforePath, afterPath: "" },
+          primaryFlow,
         },
       );
     }
@@ -823,6 +928,7 @@ export async function runRepairLoop(input?: Partial<RunConfig>, hooks: RepairLoo
         networkFailures: [],
         domNotes: [],
       },
+      primaryFlow,
     });
     throw error;
   } finally {

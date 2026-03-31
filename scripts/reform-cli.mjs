@@ -299,7 +299,9 @@ async function buildTargetConfig(options, packageJson) {
     projectRoot: targetDir,
     appUrl,
     requireApproval: !options.noApproval,
-    model: process.env.REFORM_LLM_MODEL || "glm-4.7",
+    llmProvider: process.env.REFORM_LLM_PROVIDER || "openrouter",
+    llmFallbackProvider: "zai",
+    model: process.env.REFORM_LLM_MODEL || process.env.REFORM_OPENROUTER_MODEL || "openai/gpt-4.1-mini",
     visualPlayback: {
       headless: false,
       showCursor: true,

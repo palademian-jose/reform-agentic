@@ -38,10 +38,13 @@ export function renderOverlayScript(agentBaseUrl: string) {
     recordingInputTarget: null,
     availableTargets: [],
     testSuggestions: [],
+    testSuggestionsLoading: false,
+    testSuggestionsMessage: "Scan the page to generate code-backed flows.",
     collapsed: persistedState?.collapsed ?? false,
     activeTab: persistedState?.activeTab || "monitor",
     detectedFramework: null,
-    editModeEnabled: false,
+    editModeEnabled: persistedState?.editModeEnabled ?? false,
+    editModeCollapsedBackup: persistedState?.editModeCollapsedBackup ?? null,
     editModeHoverElement: null,
     editModeSelectedElement: null,
     editModePopupVisible: false,
@@ -50,11 +53,13 @@ export function renderOverlayScript(agentBaseUrl: string) {
     editModeCustomPrompt: "",
   };
 
+  let suggestionScanSerial = 0;
+
   const style = document.createElement("style");
   style.textContent = \`
     #reform-overlay-root {
       position: fixed;
-      inset: auto 20px 20px auto;
+      inset: auto 24px 24px auto;
       display: flex;
       align-items: flex-end;
       width: 460px;
@@ -86,11 +91,19 @@ export function renderOverlayScript(agentBaseUrl: string) {
       box-shadow: 0 24px 80px rgba(0,0,0,0.42);
       backdrop-filter: blur(18px);
     }
+    #reform-overlay-root.reform-edit-mode-active .reform-shell {
+      border-color: rgba(255, 166, 77, 0.85);
+      box-shadow:
+        0 14px 40px rgba(255, 166, 77, 0.24),
+        0 22px 70px rgba(0, 0, 0, 0.42);
+    }
     .reform-header {
       display: grid;
-      gap: 12px;
-      padding: 16px 16px 14px;
-      background: linear-gradient(135deg, rgba(255,200,120,0.18), rgba(97,165,255,0.15));
+      gap: 16px;
+      padding: 18px 18px 16px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0)),
+        linear-gradient(135deg, rgba(255,200,120,0.18), rgba(97,165,255,0.15));
       border-bottom: 1px solid rgba(255,255,255,0.08);
     }
     .reform-header-top {
@@ -110,10 +123,29 @@ export function renderOverlayScript(agentBaseUrl: string) {
       line-height: 1.45;
       color: rgba(255,255,255,0.78);
     }
+    .reform-header-meta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
     .reform-header-actions {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
+    }
+    .reform-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .reform-toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
     }
     .reform-badge {
       display: inline-flex; align-items: center; gap: 6px;
@@ -136,16 +168,16 @@ export function renderOverlayScript(agentBaseUrl: string) {
     }
     .reform-body {
       display: grid;
-      gap: 12px;
-      padding: 14px 16px 16px;
+      gap: 14px;
+      padding: 16px 18px 18px;
       flex: 1 1 auto;
       min-height: 0;
       overflow: auto;
     }
     .reform-tab-bar {
       display: flex;
-      gap: 4px;
-      padding: 8px 14px;
+      gap: 8px;
+      padding: 10px 16px;
       background: rgba(13, 17, 26, 0.8);
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
@@ -199,46 +231,66 @@ export function renderOverlayScript(agentBaseUrl: string) {
     }
     .reform-tab-content {
       display: grid;
-      gap: 12px;
+      gap: 14px;
     }
     .reform-tab-content[hidden] {
       display: none;
     }
     .reform-section {
       border-radius: 20px; background: rgba(255,255,255,0.045);
-      padding: 12px;
+      padding: 16px;
       border: 1px solid rgba(255,255,255,0.06);
+      display: grid;
+      gap: 10px;
     }
     .reform-section h3 {
-      margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+      margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
       color: rgba(255,255,255,0.72);
     }
     .reform-helper {
       font-size: 12px;
       line-height: 1.5;
       color: rgba(255,255,255,0.66);
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
     .reform-meta { font-size: 13px; line-height: 1.45; color: rgba(255,255,255,0.8); }
     .reform-actions, .reform-approval { display: flex; gap: 8px; flex-wrap: wrap; }
-    .reform-button, .reform-button-ghost {
-      border-radius: 999px; padding: 10px 12px; font: inherit; cursor: pointer;
-      border: 0; font-size: 13px; font-weight: 700;
-    }
-    .reform-button { background: linear-gradient(135deg, #9fe2c1, #82b6ff); color: #0e121a; }
-    .reform-button-ghost {
-      background: transparent; color: inherit; border: 1px solid rgba(255,255,255,0.16);
-    }
-    .reform-button-soft {
-      border-radius: 999px;
+    .reform-button, .reform-button-ghost, .reform-button-soft {
+      border-radius: 14px;
       padding: 10px 12px;
       font: inherit;
       cursor: pointer;
-      border: 1px solid rgba(255,255,255,0.1);
       font-size: 13px;
       font-weight: 700;
-      background: rgba(255,255,255,0.06);
+      transition: transform 150ms ease, border-color 150ms ease, background 150ms ease, color 150ms ease;
+    }
+    .reform-button:hover, .reform-button-ghost:hover, .reform-button-soft:hover {
+      transform: translateY(-1px);
+    }
+    .reform-button {
+      background: linear-gradient(135deg, #9fe2c1, #82b6ff);
+      color: #0e121a;
+      border: 0;
+      box-shadow: 0 10px 24px rgba(86, 140, 255, 0.2);
+    }
+    .reform-button-ghost {
+      background: rgba(255,255,255,0.02);
       color: inherit;
+      border: 1px solid rgba(255,255,255,0.14);
+    }
+    .reform-button-soft {
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
+      color: inherit;
+    }
+    .reform-button-soft[data-active="true"] {
+      background: linear-gradient(135deg, rgba(255, 180, 122, 0.92), rgba(255, 125, 125, 0.92));
+      border-color: rgba(255, 180, 122, 0.3);
+      color: #1b1010;
+    }
+    .reform-button-edit {
+      min-width: 108px;
+      justify-content: center;
     }
     .reform-button:disabled, .reform-button-ghost:disabled { opacity: 0.5; cursor: not-allowed; }
     .reform-button-soft:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -364,12 +416,14 @@ export function renderOverlayScript(agentBaseUrl: string) {
       box-shadow: inset 0 0 0 1px rgba(255, 122, 122, 0.22);
     }
     .reform-summary-card {
-      border-radius: 20px;
-      padding: 14px;
-      background: linear-gradient(145deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+      border-radius: 22px;
+      padding: 18px;
+      background:
+        radial-gradient(circle at top right, rgba(103, 159, 255, 0.12), transparent 38%),
+        linear-gradient(145deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
       border: 1px solid rgba(255,255,255,0.08);
       display: grid;
-      gap: 10px;
+      gap: 14px;
     }
     .reform-summary-head {
       display: flex;
@@ -412,7 +466,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
     }
     .reform-callout {
       border-radius: 16px;
-      padding: 10px 12px;
+      padding: 12px 14px;
       font-size: 12px;
       line-height: 1.55;
       background: rgba(255,255,255,0.05);
@@ -422,10 +476,142 @@ export function renderOverlayScript(agentBaseUrl: string) {
     .reform-log-list, .reform-diff-list, .reform-regressions, .reform-suggestion-list {
       display: grid; gap: 8px;
     }
+    .reform-scan-loading {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+      color: rgba(255,255,255,0.72);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .reform-flow-card {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background:
+        radial-gradient(circle at top right, rgba(159, 226, 193, 0.08), transparent 34%),
+        rgba(255,255,255,0.04);
+    }
+    .reform-flow-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .reform-flow-title {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.35;
+      color: #f7f3ea;
+    }
+    .reform-flow-subtitle {
+      margin-top: 4px;
+      font-size: 11px;
+      line-height: 1.45;
+      color: rgba(255,255,255,0.65);
+    }
+    .reform-flow-file {
+      font-size: 11px;
+      color: #c8d7ff;
+      text-align: right;
+      line-height: 1.45;
+    }
+    .reform-flow-meta {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+    .reform-flow-steps {
+      display: grid;
+      gap: 8px;
+    }
+    .reform-flow-step {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(0,0,0,0.18);
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+    .reform-flow-step-index {
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #ffc078, #83b9ff);
+      color: #0d1320;
+      font-size: 11px;
+      font-weight: 700;
+      flex: 0 0 auto;
+    }
+    .reform-flow-step-title {
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.4;
+      color: #f7f3ea;
+    }
+    .reform-flow-step-copy {
+      margin-top: 2px;
+      font-size: 11px;
+      line-height: 1.45;
+      color: rgba(255,255,255,0.68);
+    }
+    .reform-flow-fns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .reform-flow-pill {
+      border-radius: 999px;
+      padding: 5px 8px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.08);
+      font-size: 11px;
+      color: rgba(255,255,255,0.8);
+    }
+    .reform-flow-action {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      align-items: center;
+      padding-top: 2px;
+    }
+    .reform-suggestion-empty {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px dashed rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.03);
+      color: rgba(255,255,255,0.74);
+      line-height: 1.55;
+    }
+    .reform-suggestion-empty strong {
+      color: #f7f3ea;
+    }
     .reform-grid-two {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .reform-control-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
       gap: 10px;
+      align-items: end;
+    }
+    .reform-control-row .reform-field:first-child {
+      min-width: 0;
     }
     .reform-recorder-list {
       display: grid;
@@ -541,22 +727,22 @@ export function renderOverlayScript(agentBaseUrl: string) {
     }
     .reform-builder {
       display: grid;
-      gap: 10px;
-      padding: 12px;
+      gap: 12px;
+      padding: 16px;
       border-radius: 16px;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.06);
-      margin-top: 10px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      margin-top: 12px;
     }
     .reform-builder-actions {
       display: flex;
-      gap: 8px;
+      gap: 10px;
       flex-wrap: wrap;
     }
     .reform-shots {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      gap: 12px;
     }
     .reform-shot {
       border-radius: 16px;
@@ -587,11 +773,11 @@ export function renderOverlayScript(agentBaseUrl: string) {
     }
     .reform-evidence-grid {
       display: grid;
-      gap: 8px;
+      gap: 10px;
     }
     .reform-evidence-card {
       border-radius: 14px;
-      padding: 10px;
+      padding: 12px;
       background: rgba(0,0,0,0.18);
       border: 1px solid rgba(255,255,255,0.05);
     }
@@ -611,13 +797,13 @@ export function renderOverlayScript(agentBaseUrl: string) {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 6px;
+      gap: 10px;
+      margin-bottom: 8px;
     }
     .reform-evidence-list {
       display: grid;
-      gap: 6px;
-      margin-top: 8px;
+      gap: 8px;
+      margin-top: 10px;
     }
     .reform-evidence-item {
       font-size: 12px;
@@ -629,7 +815,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
     }
     .reform-timeline {
       display: grid;
-      gap: 8px;
+      gap: 10px;
     }
     .reform-timeline-item {
       display: grid;
@@ -659,7 +845,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
     }
     .reform-step-list {
       display: grid;
-      gap: 8px;
+      gap: 10px;
     }
     .reform-step {
       display: flex;
@@ -697,10 +883,10 @@ export function renderOverlayScript(agentBaseUrl: string) {
     #reform-approval-popout {
       position: fixed;
       right: 496px;
-      bottom: 20px;
+      bottom: 24px;
       width: min(360px, calc(100vw - 24px));
       max-height: calc(100vh - 40px);
-      z-index: 2147483646;
+      z-index: 2147483648;
       pointer-events: none;
       transition: right 220ms ease, opacity 180ms ease, transform 180ms ease;
     }
@@ -727,23 +913,40 @@ export function renderOverlayScript(agentBaseUrl: string) {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
-      gap: 10px;
-      padding: 14px 14px 12px;
+      gap: 12px;
+      padding: 16px 16px 14px;
       border-bottom: 1px solid rgba(255,255,255,0.08);
     }
     .reform-popout-body {
       display: grid;
-      gap: 10px;
-      padding: 12px 14px 14px;
+      gap: 12px;
+      padding: 14px 16px 16px;
       max-height: calc(100vh - 110px);
       overflow: auto;
     }
     .reform-toggle {
-      position: fixed; right: 20px; bottom: 20px; z-index: 2147483646;
-      border: 0; border-radius: 999px; padding: 12px 16px; cursor: pointer;
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 2147483652;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 132px;
+      min-height: 52px;
+      padding: 14px 22px;
+      border: 0;
+      border-radius: 999px;
+      cursor: pointer;
+      touch-action: manipulation;
+      user-select: none;
       font: 700 13px "IBM Plex Sans", sans-serif;
+      line-height: 1;
+      letter-spacing: 0.02em;
       background: linear-gradient(135deg, #ffc078, #83b9ff); color: #0d1320;
       box-shadow: 0 16px 40px rgba(0,0,0,0.35);
+      pointer-events: auto;
+      transform: translateZ(0);
     }
     .reform-toggle[data-open="true"] {
       background: rgba(13, 17, 26, 0.9);
@@ -761,10 +964,13 @@ export function renderOverlayScript(agentBaseUrl: string) {
       #reform-approval-popout {
         left: 12px;
         right: 12px;
-        bottom: 90px;
+        bottom: 162px;
         width: auto;
       }
       .reform-summary-grid {
+        grid-template-columns: 1fr;
+      }
+      .reform-control-row {
         grid-template-columns: 1fr;
       }
       .reform-grid-two,
@@ -816,7 +1022,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
   const toggle = document.createElement("button");
   toggle.className = "reform-toggle";
   toggle.textContent = "Reform";
-  document.body.appendChild(toggle);
 
   const root = document.createElement("div");
   root.id = "reform-overlay-root";
@@ -827,15 +1032,28 @@ export function renderOverlayScript(agentBaseUrl: string) {
         <div class="reform-header-top">
           <div class="reform-brand">
             <div class="reform-title">Reform Overlay</div>
-            <div class="reform-subtitle">Monitor the current repair run, record flows, review proposed fixes, and understand what the agent is doing step by step.</div>
+            <div class="reform-subtitle">Run, inspect, and review repairs.</div>
+            <div class="reform-header-meta">
+              <div class="reform-badge" id="reform-framework-badge" data-tone="neutral" style="display:none">\u2014</div>
+              <div class="reform-badge" id="reform-model-badge" data-tone="neutral">LLM: \u2014</div>
+              <div class="reform-badge" id="reform-overlay-status" data-tone="neutral">Connecting</div>
+            </div>
           </div>
           <div class="reform-header-actions">
-            <div class="reform-badge" id="reform-framework-badge" data-tone="neutral" style="display:none">\u2014</div>
-            <div class="reform-badge" id="reform-overlay-status" data-tone="neutral">Connecting</div>
             <button class="reform-icon-button" id="reform-collapse-button" aria-label="Collapse Reform overlay">−</button>
           </div>
         </div>
-        <div class="reform-callout" id="reform-guidance">Connecting to the local Reform agent. Once connected, this panel will explain the current stage, likely next action, and whether operator approval is needed.</div>
+        <div class="reform-toolbar">
+          <div class="reform-toolbar-group">
+            <button class="reform-button" id="reform-run-button">Run In This Tab</button>
+            <button class="reform-button-soft" id="reform-record-button">Start Recording</button>
+            <button class="reform-button-soft reform-button-edit" id="reform-edit-mode-toggle" data-active="false">Edit Mode</button>
+          </div>
+          <div class="reform-toolbar-group">
+            <button class="reform-button-ghost" id="reform-clear-recording-button">Clear Steps</button>
+          </div>
+        </div>
+        <div class="reform-callout" id="reform-guidance">Connecting to the local Reform agent.</div>
       </div>
       <div class="reform-tab-bar" role="tablist">
         <button class="reform-tab" data-tab="monitor" role="tab" aria-selected="true">
@@ -863,7 +1081,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
         <div class="reform-tab-content" data-panel="monitor" role="tabpanel">
         <section class="reform-section">
           <h3>Run Overview</h3>
-          <div class="reform-helper">Use this section to understand whether Reform is observing, repairing, waiting for approval, or already finished. The summary is intentionally verbose so it is readable during live runs.</div>
           <div class="reform-summary-card">
             <div class="reform-summary-head">
               <div>
@@ -882,8 +1099,8 @@ export function renderOverlayScript(agentBaseUrl: string) {
                 <div class="reform-stat-value" id="reform-stage-value">Not available</div>
               </div>
               <div class="reform-stat">
-                <div class="reform-stat-label">Connection</div>
-                <div class="reform-stat-value" id="reform-connection-value">Connecting</div>
+                <div class="reform-stat-label">Model</div>
+                <div class="reform-stat-value" id="reform-model-value">\u2014</div>
               </div>
               <div class="reform-stat">
                 <div class="reform-stat-label">Approval State</div>
@@ -892,15 +1109,14 @@ export function renderOverlayScript(agentBaseUrl: string) {
             </div>
             <div class="reform-callout" id="reform-next-step">Waiting for the agent to publish the first state update.</div>
           </div>
-          <div class="reform-actions" style="margin-top:10px">
-            <button class="reform-button" id="reform-run-button">Run In This Tab</button>
-            <button class="reform-button-soft" id="reform-record-button">Start Recording</button>
-            <button class="reform-button-ghost" id="reform-clear-recording-button">Clear Steps</button>
-          </div>
           <div class="reform-helper" id="reform-run-meta">Waiting for agent state.</div>
           <div class="reform-builder">
-            <div class="reform-helper" style="margin-bottom:0">Build a step inline instead of using prompt dialogs. Refresh targets to scan the current page for clickable and form-related selectors.</div>
-            <div class="reform-grid-two">
+            <div class="reform-helper" style="margin-bottom:0">Build steps inline. Refresh targets to rescan the page.</div>
+            <div class="reform-control-row">
+              <div class="reform-field">
+                <label for="reform-action-target">Page Target</label>
+                <select id="reform-action-target" class="reform-select"></select>
+              </div>
               <div class="reform-field">
                 <label for="reform-action-kind">Step Kind</label>
                 <select id="reform-action-kind" class="reform-select">
@@ -911,17 +1127,13 @@ export function renderOverlayScript(agentBaseUrl: string) {
                   <option value="wait_for_url">Wait For URL</option>
                 </select>
               </div>
-              <div class="reform-field">
-                <label for="reform-action-target">Page Target</label>
-                <select id="reform-action-target" class="reform-select"></select>
-              </div>
+              <button class="reform-button-ghost" id="reform-refresh-targets-button">Refresh</button>
             </div>
             <div class="reform-field">
               <label for="reform-action-value">Value Or Match Text</label>
               <input id="reform-action-value" class="reform-input" placeholder="Only needed for fill and wait steps" />
             </div>
             <div class="reform-builder-actions">
-              <button class="reform-button-ghost" id="reform-refresh-targets-button">Refresh Targets</button>
               <button class="reform-button-ghost" id="reform-add-step-button">Add Step</button>
             </div>
           </div>
@@ -929,19 +1141,17 @@ export function renderOverlayScript(agentBaseUrl: string) {
         </section>
         <section class="reform-section">
           <h3>Timeline</h3>
-          <div class="reform-helper">This is a compact event trail of stage transitions and important run moments so you can reconstruct what happened without reading raw logs in order.</div>
           <div class="reform-timeline" id="reform-timeline"></div>
         </section>
         <section class="reform-section">
           <h3>Logs</h3>
-          <div class="reform-helper">Recent log events are shown here with short timestamps. These messages are preserved in a more readable form than the terminal stream.</div>
           <div class="reform-log-list" id="reform-log-list"></div>
         </section>
         </div>
         <div class="reform-tab-content" data-panel="build" role="tabpanel" hidden>
         <section class="reform-section">
-          <h3>Possible Tests</h3>
-          <div class="reform-helper">Scan the current page to generate candidate flows from visible buttons, links, and forms. Pick one to quickly seed a test without hand-authoring selectors.</div>
+          <h3>Code-Backed Flows</h3>
+          <div class="reform-helper">Scan the current page to map visible buttons to source files, testable functions, and a clearer flow.</div>
           <div class="reform-actions">
             <button class="reform-button-ghost" id="reform-scan-button">Scan Current Page</button>
           </div>
@@ -949,41 +1159,47 @@ export function renderOverlayScript(agentBaseUrl: string) {
         </section>
         <section class="reform-section">
           <h3>Config</h3>
-          <div class="reform-helper">This JSON drives the same-tab overlay runner and can also be sent to the local Reform agent. Recording and suggestion actions update it automatically when possible.</div>
+          <div class="reform-helper">Recording and suggestions update this config when possible.</div>
+          <div class="reform-grid-two" style="margin-bottom:10px">
+            <div class="reform-field">
+              <label for="reform-llm-provider">LLM Provider</label>
+              <select id="reform-llm-provider" class="reform-select">
+                <option value="openrouter">OpenRouter</option>
+                <option value="zai">z.ai</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </div>
+            <div class="reform-field">
+              <label for="reform-llm-model">Model</label>
+              <input id="reform-llm-model" class="reform-input" placeholder="x-ai/grok-4-fast" />
+            </div>
+          </div>
+          <div class="reform-helper">Fallback is fixed to z.ai.</div>
           <textarea id="reform-config" class="reform-textarea"></textarea>
           <div class="reform-validation" id="reform-config-validation" data-tone="good">Config looks ready to run.</div>
-        </section>
-        <section class="reform-section">
-          <h3>Suggested Workflow</h3>
-          <div class="reform-helper">A typical loop is: record or scan a flow, review the generated config, run Reform, then approve or reject patch proposals. This keeps the overlay approachable for people who are not debugging Playwright internals.</div>
-          <div class="reform-step-list">
-            <div class="reform-step"><div class="reform-step-index">1</div><div><strong>Capture a realistic flow</strong><div>Use recording or page scanning to build browser actions that reflect the real user journey you care about.</div></div></div>
-            <div class="reform-step"><div class="reform-step-index">2</div><div><strong>Review the config before running</strong><div>Check the browser actions, app URL, and regression checks so the agent is solving the right problem.</div></div></div>
-            <div class="reform-step"><div class="reform-step-index">3</div><div><strong>Run and monitor stages</strong><div>The overview and logs explain whether Reform is validating the flow, targeting files, waiting for approval, or verifying regressions.</div></div></div>
-          </div>
         </section>
         </div>
         <div class="reform-tab-content" data-panel="evidence" role="tabpanel" hidden>
         <section class="reform-section">
           <h3>Visual Diff</h3>
-          <div class="reform-helper">These before and after thumbnails are primarily for UI-facing changes like layout shifts, missing content, button states, copy changes, and obviously broken visual flows.</div>
+          <div class="reform-helper">Before and after captures for UI-facing changes.</div>
           <div class="reform-shots" id="reform-shot-grid"></div>
         </section>
         <section class="reform-section">
           <h3>Evidence</h3>
-          <div class="reform-helper">Browser evidence is grouped by severity so you can quickly tell whether the run looks visually healthy, operationally noisy, or clearly broken.</div>
+          <div class="reform-helper">Browser signals grouped by severity.</div>
           <div class="reform-evidence-grid" id="reform-evidence-grid"></div>
         </section>
         <section class="reform-section">
           <h3>Regressions</h3>
-          <div class="reform-helper">After a primary flow succeeds, Reform checks nearby routes or expectations here to catch obvious regressions before marking the run healthy.</div>
+          <div class="reform-helper">Nearby checks run after the main flow passes.</div>
           <div class="reform-regressions" id="reform-regressions"></div>
         </section>
         </div>
         <div class="reform-tab-content" data-panel="review" role="tabpanel" hidden>
         <section class="reform-section" id="reform-approval-section" style="display:none">
           <h3>Patch Approval</h3>
-          <div class="reform-helper">Review why the patch was proposed, which files are changing, and the unified diff before approving the edit.</div>
+          <div class="reform-helper">Review the rationale and diff before approving.</div>
           <div class="reform-meta" id="reform-patch-rationale"></div>
           <div class="reform-approval" style="margin-top:10px">
             <button class="reform-button" id="reform-approve-button">Approve Patch</button>
@@ -1034,9 +1250,11 @@ export function renderOverlayScript(agentBaseUrl: string) {
     </div>
   \`;
   document.body.appendChild(successBurst);
+  document.body.appendChild(toggle);
 
   const els = {
     frameworkBadge: root.querySelector("#reform-framework-badge"),
+    modelBadge: root.querySelector("#reform-model-badge"),
     status: root.querySelector("#reform-overlay-status"),
     guidance: root.querySelector("#reform-guidance"),
     collapseButton: root.querySelector("#reform-collapse-button"),
@@ -1045,12 +1263,13 @@ export function renderOverlayScript(agentBaseUrl: string) {
     stageBadge: root.querySelector("#reform-stage-badge"),
     goalValue: root.querySelector("#reform-goal-value"),
     stageValue: root.querySelector("#reform-stage-value"),
-    connectionValue: root.querySelector("#reform-connection-value"),
+    modelValue: root.querySelector("#reform-model-value"),
     approvalValue: root.querySelector("#reform-approval-value"),
     nextStep: root.querySelector("#reform-next-step"),
     runMeta: root.querySelector("#reform-run-meta"),
     runButton: root.querySelector("#reform-run-button"),
     recordButton: root.querySelector("#reform-record-button"),
+    editModeToggle: root.querySelector("#reform-edit-mode-toggle"),
     actionKind: root.querySelector("#reform-action-kind"),
     actionTarget: root.querySelector("#reform-action-target"),
     actionValue: root.querySelector("#reform-action-value"),
@@ -1061,6 +1280,8 @@ export function renderOverlayScript(agentBaseUrl: string) {
     scanButton: root.querySelector("#reform-scan-button"),
     suggestionList: root.querySelector("#reform-suggestion-list"),
     config: root.querySelector("#reform-config"),
+    llmProvider: root.querySelector("#reform-llm-provider"),
+    llmModel: root.querySelector("#reform-llm-model"),
     configValidation: root.querySelector("#reform-config-validation"),
     timeline: root.querySelector("#reform-timeline"),
     shotGrid: root.querySelector("#reform-shot-grid"),
@@ -1163,6 +1384,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
           collapsed: state.collapsed,
           activeTab: state.activeTab,
           editModeEnabled: state.editModeEnabled,
+          editModeCollapsedBackup: state.editModeCollapsedBackup,
         }),
       );
     } catch {
@@ -1215,6 +1437,116 @@ export function renderOverlayScript(agentBaseUrl: string) {
 
   function prettifyStage(stage) {
     return String(stage || "unknown").replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+
+  function prettifyProvider(provider) {
+    if (!provider) return "Unknown";
+    if (provider === "zai") return "z.ai";
+    if (provider === "openrouter") return "OpenRouter";
+    if (provider === "openai") return "OpenAI";
+    return provider;
+  }
+
+  function getEditableConfig() {
+    try {
+      return JSON.parse(els.config.value || state.configText || "{}");
+    } catch {
+      return null;
+    }
+  }
+
+  function getActiveModel(repairState) {
+    const editableConfig = getEditableConfig();
+    return (
+      repairState?.config?.model ||
+      state.localRun?.config?.model ||
+      state.health?.config?.model ||
+      editableConfig?.model ||
+      "Unknown"
+    );
+  }
+
+  function getActiveProvider(repairState) {
+    const editableConfig = getEditableConfig();
+    return (
+      repairState?.config?.llmProvider ||
+      state.localRun?.config?.llmProvider ||
+      state.health?.config?.llmProvider ||
+      editableConfig?.llmProvider ||
+      "openrouter"
+    );
+  }
+
+  function syncLlmControlsFromConfig(config) {
+    const provider = config?.llmProvider || "openrouter";
+    const model = config?.model || "";
+    els.llmProvider.value = provider;
+    els.llmModel.value = model;
+  }
+
+  function renderEditToggle() {
+    els.editModeToggle.textContent = state.editModeEnabled ? "Exit Edit" : "Edit Mode";
+    els.editModeToggle.dataset.active = state.editModeEnabled ? "true" : "false";
+  }
+
+  async function ensureEditModeScript() {
+    if (window.__REFORM_EDIT_MODE__) {
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = AGENT_BASE_URL + "/edit-mode.js";
+    document.head.appendChild(script);
+    await new Promise((resolve) => {
+      script.onload = resolve;
+    });
+  }
+
+  async function toggleEditMode() {
+    await ensureEditModeScript();
+    if (state.editModeEnabled) {
+      window.__REFORM_EDIT_MODE__?.disable();
+      state.editModeEnabled = false;
+      if (state.editModeCollapsedBackup !== null) {
+        setCollapsed(state.editModeCollapsedBackup);
+        state.editModeCollapsedBackup = null;
+      }
+    } else {
+      state.editModeCollapsedBackup = state.collapsed;
+      setCollapsed(true);
+      window.__REFORM_EDIT_MODE__?.enable();
+      state.editModeEnabled = true;
+    }
+    applyEditModeVisuals(state.editModeEnabled);
+    renderEditToggle();
+    persistOverlayState();
+  }
+
+  function exitEditModeAndOpenOverlay() {
+    if (state.editModeEnabled && window.__REFORM_EDIT_MODE__) {
+      window.__REFORM_EDIT_MODE__.disable();
+      state.editModeEnabled = false;
+      state.editModeCollapsedBackup = null;
+      applyEditModeVisuals(false);
+      renderEditToggle();
+      persistOverlayState();
+    }
+    setCollapsed(false);
+  }
+
+  function updateConfigFromLlmControls() {
+    try {
+      const parsed = JSON.parse(els.config.value || "{}");
+      parsed.llmProvider = els.llmProvider.value || "openrouter";
+      parsed.llmFallbackProvider = "zai";
+      parsed.model = els.llmModel.value.trim() || parsed.model || "x-ai/grok-4-fast";
+      els.config.value = JSON.stringify(parsed, null, 2);
+      state.configText = els.config.value;
+      validateConfigEditor();
+      persistOverlayState();
+    } catch {
+      // Keep manual config editing independent from control updates.
+    }
   }
 
   function createRunRecord(config, stage, detail, options = {}) {
@@ -1826,6 +2158,14 @@ export function renderOverlayScript(agentBaseUrl: string) {
       return { ok: false, message: "Regression checks must be an array, even if empty." };
     }
 
+    if (typeof parsed.llmProvider !== "string" || !parsed.llmProvider.trim()) {
+      return { ok: false, message: "Config is missing a non-empty \\"llmProvider\\" field." };
+    }
+
+    if (typeof parsed.model !== "string" || !parsed.model.trim()) {
+      return { ok: false, message: "Config is missing a non-empty \\"model\\" field." };
+    }
+
     return {
       ok: true,
       message:
@@ -1844,6 +2184,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
   function validateConfigEditor() {
     try {
       const parsed = JSON.parse(els.config.value || "{}");
+      syncLlmControlsFromConfig(parsed);
       state.configValidation = summarizeValidation(parsed);
     } catch (error) {
       state.configValidation = {
@@ -1960,11 +2301,16 @@ export function renderOverlayScript(agentBaseUrl: string) {
     return "neutral";
   }
 
+  function applyEditModeVisuals(enabled) {
+    root.classList.toggle("reform-edit-mode-active", enabled);
+  }
+
   function setCollapsed(collapsed) {
     state.collapsed = collapsed;
-    root.className = collapsed ? "reform-collapsed" : "";
+    root.classList.toggle("reform-collapsed", collapsed);
+    applyEditModeVisuals(state.editModeEnabled);
     toggle.dataset.open = collapsed ? "false" : "true";
-    toggle.textContent = collapsed ? "Reform" : "Hide Reform";
+    toggle.textContent = "Reform";
     updateApprovalPopoutPosition();
     persistOverlayState();
   }
@@ -2098,8 +2444,9 @@ export function renderOverlayScript(agentBaseUrl: string) {
 
   function renderRecorder() {
     els.recordButton.textContent = state.recorderEnabled ? "Stop Recording" : "Start Recording";
+    els.recordButton.dataset.active = state.recorderEnabled ? "true" : "false";
     els.recordButton.style.background = state.recorderEnabled
-      ? "linear-gradient(135deg, #ffb47a, #ff7d7d)"
+      ? "linear-gradient(135deg, rgba(255, 180, 122, 0.92), rgba(255, 125, 125, 0.92))"
       : "";
     els.recorderList.innerHTML = state.recordedActions.length
       ? state.recordedActions.map((action, index) => \`
@@ -2121,20 +2468,307 @@ export function renderOverlayScript(agentBaseUrl: string) {
       : "<div class=\\"reform-empty\\">No recorded steps yet. Turn on recording and interact with the page, or use page scanning to seed a flow.</div>";
   }
 
+  function buildElementDescriptor(element) {
+    if (!element) return null;
+
+    const rect = element.getBoundingClientRect();
+    const attributes = {};
+    for (const attr of Array.from(element.attributes || [])) {
+      if (!attr || !attr.name) continue;
+      if (attr.name === "class" || attr.name === "style") continue;
+      if (!attr.name.startsWith("data-") && attr.name !== "aria-label" && attr.name !== "title") continue;
+      attributes[attr.name] = attr.value;
+    }
+
+    const textContent = (element.innerText || element.textContent || "").trim().replace(/\\s+/g, " ").slice(0, 180);
+    return {
+      tagName: element.tagName,
+      id: element.id || null,
+      className: Array.from(element.classList || []).join(" "),
+      textContent,
+      attributes,
+      boundingBox: {
+        x: Math.max(0, Math.round(rect.x)),
+        y: Math.max(0, Math.round(rect.y)),
+        width: Math.max(0, Math.round(rect.width)),
+        height: Math.max(0, Math.round(rect.height)),
+      },
+      componentName: null,
+      parentComponentNames: [],
+      cssSelector: getTargetDescriptor(element),
+      occurrenceCount: 1,
+    };
+  }
+
+  function isTestableActionElement(element) {
+    if (!element || root.contains(element) || toggle.contains(element)) return false;
+    if (!(element instanceof HTMLElement)) return false;
+
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    if (!element.isConnected) return false;
+
+    const tagName = element.tagName.toLowerCase();
+    if (tagName === "button") return true;
+    if (tagName === "a" && element.hasAttribute("href")) return true;
+    if (element.getAttribute("role") === "button") return true;
+    if (element.hasAttribute("onclick")) return true;
+    if (element.dataset && element.dataset.repairId) return true;
+    return false;
+  }
+
+  function getNormalizedFlowLabel(text) {
+    return String(text || "")
+      .replace(/\\s+/g, " ")
+      .replace(/[\\u{1F300}-\\u{1FAFF}\\u2600-\\u27BF]/gu, "")
+      .trim()
+      .toLowerCase();
+  }
+
+  function isLikelyActionLabel(text) {
+    const label = getNormalizedFlowLabel(text);
+    if (!label) return false;
+
+    const actionPatterns = [
+      /\\badd\\b/,
+      /\\bremove\\b/,
+      /\\bbuy\\b/,
+      /\\bcheckout\\b/,
+      /\\bsubmit\\b/,
+      /\\bsave\\b/,
+      /\\bcontinue\\b/,
+      /\\bnext\\b/,
+      /\\bback\\b/,
+      /\\bconfirm\\b/,
+      /\\bcancel\\b/,
+      /\\bedit\\b/,
+      /\\bdelete\\b/,
+      /\\bupdate\\b/,
+      /\\bsearch\\b/,
+      /\\bfilter\\b/,
+      /\\bsort\\b/,
+      /\\bopen\\b/,
+      /\\bclose\\b/,
+      /\\bview\\b/,
+      /\\blog in\\b/,
+      /\\blog out\\b/,
+      /\\bsign in\\b/,
+      /\\bsign up\\b/,
+      /\\bcreate\\b/,
+      /\\bapply\\b/,
+      /\\bsend\\b/,
+      /\\bdownload\\b/,
+      /\\bupload\\b/,
+      /\\bretry\\b/,
+      /\\bstart\\b/,
+      /\\bstop\\b/,
+      /\\bplay\\b/,
+      /\\bpause\\b/,
+      /\\bexpand\\b/,
+      /\\bcollapse\\b/,
+      /\\badd to cart\\b/,
+      /\\bgo to cart\\b/,
+    ];
+
+    return actionPatterns.some((pattern) => pattern.test(label));
+  }
+
+  function isLikelyRepresentativeAction(element, label) {
+    const normalized = getNormalizedFlowLabel(label);
+    if (!normalized) return false;
+
+    const tagName = element.tagName.toLowerCase();
+    const hasActionRole =
+      tagName === "button" ||
+      (tagName === "a" && element.hasAttribute("href")) ||
+      element.getAttribute("role") === "button" ||
+      element.hasAttribute("onclick") ||
+      element.dataset?.repairId;
+
+    if (!hasActionRole) {
+      return false;
+    }
+
+    if (isLikelyActionLabel(normalized)) {
+      return true;
+    }
+
+    const shortNavLabels = ["cart", "checkout", "menu", "back", "next", "continue", "more"];
+    if (tagName === "a" && shortNavLabels.includes(normalized)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function extractFunctionCandidates(content) {
+    if (!content) return [];
+
+    const names = new Map();
+    const patterns = [
+      /(?:^|\\n)\\s*(?:export\\s+)?function\\s+([A-Za-z_$][\\w$]*)\\s*\\(/g,
+      /(?:^|\\n)\\s*(?:export\\s+)?(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(?:async\\s*)?(?:function\\s*\\(|\\([^)]*\\)\\s*=>|[A-Za-z_$][\\w$]*\\s*=>)/g,
+      /(?:^|\\n)\\s*(?:export\\s+)?class\\s+([A-Za-z_$][\\w$]*)\\b/g,
+    ];
+
+    for (const pattern of patterns) {
+      for (const match of content.matchAll(pattern)) {
+        if (!match[1]) continue;
+        const name = match[1];
+        const lower = name.toLowerCase();
+        let score = 0;
+        if (/^(handle|on|toggle|open|close|submit|click|save|add|remove|select|change|update|load|fetch|validate|set|get|render|submit)/.test(lower)) score += 8;
+        if (/(button|form|input|menu|dialog|modal|nav|tab|page|route)/.test(lower)) score += 3;
+        if (name[0] === name[0]?.toUpperCase()) score -= 2;
+        const existing = names.get(name);
+        if (!existing || score > existing.score) {
+          names.set(name, { name, score });
+        }
+      }
+    }
+
+    return Array.from(names.values())
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      .map((item) => item.name);
+  }
+
+  function deriveFlowSteps(actionLabel, filePath, lineNumber, functions, confidence) {
+    const primaryFunction = functions[0] || "the related handler";
+    const secondaryFunction = functions[1] || "the surrounding render path";
+    return [
+      {
+        title: "Trigger the entry button",
+        copy: actionLabel + " is the visible entry point on this page and starts the interaction.",
+      },
+      {
+        title: "Trace the source file",
+        copy: filePath + (lineNumber ? ":" + lineNumber : "") + " is the resolved source location for this action.",
+      },
+      {
+        title: "Exercise the testable code",
+        copy: "Focus on " + primaryFunction + (secondaryFunction ? " and " + secondaryFunction : "") + " while validating the path.",
+      },
+      {
+        title: "Confirm the outcome",
+        copy: confidence && confidence >= 0.9
+          ? "High-confidence mapping. Verify the expected UI or route change after the button action."
+          : "Review the visible result and any related state change to confirm the flow is stable.",
+      },
+    ];
+  }
+
+  function getProjectRootForScanning() {
+    const healthRoot = state.health?.config?.projectRoot;
+    if (healthRoot) return healthRoot;
+
+    const repairRoot = state.repairState?.config?.projectRoot;
+    if (repairRoot) return repairRoot;
+
+    try {
+      const parsed = JSON.parse(els.config.value || "{}");
+      if (typeof parsed.projectRoot === "string" && parsed.projectRoot.trim()) {
+        return parsed.projectRoot.trim();
+      }
+    } catch {
+      // Ignore malformed config during bootstrap.
+    }
+
+    return "";
+  }
+
+  async function resolveButtonFlowSuggestion(element, index) {
+    const descriptor = buildElementDescriptor(element);
+    if (!descriptor) return null;
+
+    const label = (element.innerText || element.textContent || descriptor.cssSelector || "Button").trim().replace(/\\s+/g, " ").slice(0, 120) || "Button";
+    const payload = {
+      element: descriptor,
+      projectRoot: getProjectRootForScanning(),
+      currentUrl: window.location.href,
+    };
+
+    if (!payload.projectRoot) return null;
+
+    const response = await postJson("/inspect/resolve-element", payload);
+    if (!response?.result) return null;
+
+    const filePath = response.result.filePath || "Unknown file";
+    const lineNumber = response.result.lineNumber ?? null;
+    const functions = extractFunctionCandidates(response.result.content).slice(0, 5);
+    const actionTarget = descriptor.cssSelector || getTargetDescriptor(element);
+    const title = functions[0] ? label + " via " + functions[0] : label;
+    const steps = deriveFlowSteps(label, filePath, lineNumber, functions, response.result.confidence);
+
+    return {
+      title,
+      description: "Code-backed flow resolved from the current page button.",
+      actionTarget,
+      sourceFile: filePath,
+      lineNumber,
+      confidence: response.result.confidence ?? null,
+      functions,
+      steps,
+      actions: [
+        { kind: "goto", target: getCurrentRouteTarget() },
+        { kind: "hover", target: actionTarget },
+        { kind: "click", target: actionTarget },
+      ],
+    };
+  }
+
   function renderSuggestions() {
+    if (state.testSuggestionsLoading) {
+      els.suggestionList.innerHTML = \`
+        <div class="reform-scan-loading">
+          <strong>Scanning page buttons</strong>
+          <div>\${escapeHtml(state.testSuggestionsMessage || "Resolving the selected button to source code and testable functions.")}</div>
+        </div>
+      \`;
+      return;
+    }
+
     els.suggestionList.innerHTML = state.testSuggestions.length
       ? state.testSuggestions.map((suggestion, index) => \`
-          <div class="reform-recorder-item">
-            <div class="reform-suggestion-row">
+          <div class="reform-flow-card">
+            <div class="reform-flow-head">
               <div>
-                <strong>\${suggestion.title}</strong>
-                <div>\${suggestion.description}</div>
+                <div class="reform-flow-title">\${escapeHtml(suggestion.title)}</div>
+                <div class="reform-flow-subtitle">\${escapeHtml(suggestion.description)}</div>
+                \${suggestion.occurrenceCount > 1 ? '<div class="reform-flow-subtitle">Representative of ' + String(suggestion.occurrenceCount) + ' matching elements on the page.</div>' : ""}
               </div>
-              <button class="reform-mini-button" data-suggestion-index="\${index}">Use</button>
+              <div class="reform-flow-file">
+                <div class="reform-flow-meta">
+                  \${suggestion.occurrenceCount > 1 ? '<div class="reform-badge" data-tone="neutral">Representative x' + String(suggestion.occurrenceCount) + '</div>' : ""}
+                  <div class="reform-badge" data-tone="\${suggestion.confidence >= 0.9 ? "good" : suggestion.confidence >= 0.7 ? "warn" : "neutral"}">\${suggestion.confidence ? Math.round(suggestion.confidence * 100) + "%" : "resolved"}</div>
+                </div>
+                <div>\${escapeHtml(suggestion.sourceFile)}\${suggestion.lineNumber ? ":" + suggestion.lineNumber : ""}</div>
+              </div>
+            </div>
+            <div class="reform-flow-steps">
+              \${suggestion.steps.map((step, stepIndex) => \`
+                <div class="reform-flow-step">
+                  <div class="reform-flow-step-index">\${stepIndex + 1}</div>
+                  <div>
+                    <div class="reform-flow-step-title">\${escapeHtml(step.title)}</div>
+                    <div class="reform-flow-step-copy">\${escapeHtml(step.copy)}</div>
+                  </div>
+                </div>
+              \`).join("")}
+            </div>
+            <div class="reform-flow-fns">
+              \${(suggestion.functions.length ? suggestion.functions : ["No obvious handler names found"]).map((fn) => \`<span class="reform-flow-pill">\${escapeHtml(fn)}</span>\`).join("")}
+            </div>
+            <div class="reform-flow-action">
+              <button class="reform-mini-button" data-suggestion-index="\${index}">Use flow</button>
             </div>
           </div>
         \`).join("")
-      : "<div class=\\"reform-empty\\">Scan the page to list testable links, buttons, and forms that can be turned into candidate test flows.</div>";
+      : \`
+          <div class="reform-suggestion-empty">
+            <strong>No code-backed button flow found yet.</strong>
+            <div>\${escapeHtml(state.testSuggestionsMessage || "Scan the page to resolve a visible button into its related source file and testable functions.")}</div>
+          </div>
+        \`;
   }
 
   function getCurrentRouteTarget() {
@@ -2234,11 +2868,10 @@ export function renderOverlayScript(agentBaseUrl: string) {
     els.actionValue.value = "";
   }
 
-  function buildSuggestedTests() {
+  function buildLegacySuggestions() {
     const suggestions = [];
     const seen = new Set();
     const startTarget = getCurrentRouteTarget();
-    buildAvailableTargets();
     const clickable = Array.from(
       document.querySelectorAll("button, a[href], [role='button'], [onclick], [data-repair-id]"),
     )
@@ -2252,6 +2885,9 @@ export function renderOverlayScript(agentBaseUrl: string) {
       seen.add(descriptor);
 
       const label = (element.innerText || element.textContent || descriptor).trim().slice(0, 120);
+      if (!isLikelyRepresentativeAction(element, label) && !element.closest("form")) {
+        continue;
+      }
       const href = element.getAttribute("href");
       const suggestion = {
         title: label || descriptor,
@@ -2264,6 +2900,16 @@ export function renderOverlayScript(agentBaseUrl: string) {
           { kind: "click", target: descriptor },
           ...(href ? [{ kind: "wait_for_url", target: href }] : []),
         ],
+        sourceFile: "Current page",
+        lineNumber: null,
+        confidence: null,
+        functions: [],
+        steps: [
+          { title: "Inspect the element", copy: "Use the highlighted control on the page." },
+          { title: "Trigger the interaction", copy: "Click the visible control and confirm the route or state change." },
+          { title: "Validate the result", copy: "Make sure the page ends in the expected state." },
+        ],
+        occurrenceCount: 1,
       };
 
       suggestions.push(suggestion);
@@ -2292,11 +2938,92 @@ export function renderOverlayScript(agentBaseUrl: string) {
         title: "Form submit: " + ((submit.innerText || submit.textContent || "submit").trim()),
         description: "Fill visible fields and submit the form.",
         actions,
+        sourceFile: "Current page",
+        lineNumber: null,
+        confidence: null,
+        functions: [],
+        steps: [
+          { title: "Fill the form", copy: "Populate the visible fields with demo input." },
+          { title: "Submit the form", copy: "Trigger the submit control on the page." },
+          { title: "Verify the outcome", copy: "Confirm the navigation, message, or state update." },
+        ],
+        occurrenceCount: 1,
       });
     }
 
-    state.testSuggestions = suggestions;
+    return suggestions;
+  }
+
+  async function buildSuggestedTests() {
+    const scanId = ++suggestionScanSerial;
+    state.testSuggestionsLoading = true;
+    state.testSuggestionsMessage = "Resolving action buttons to source files and testable functions.";
+    state.testSuggestions = [];
     renderSuggestions();
+
+    buildAvailableTargets();
+    const rawCandidates = Array.from(
+      document.querySelectorAll("button, a[href], [role='button'], [onclick], [data-repair-id]"),
+    )
+      .filter(isTestableActionElement)
+      .slice(0, 8);
+
+    const labelCounts = new Map();
+    for (const element of rawCandidates) {
+      const label = (element.innerText || element.textContent || element.getAttribute("aria-label") || element.getAttribute("title") || "").trim();
+      if (!isLikelyRepresentativeAction(element, label)) {
+        continue;
+      }
+      const key = getNormalizedFlowLabel(label);
+      if (!key) continue;
+      labelCounts.set(key, (labelCounts.get(key) || 0) + 1);
+    }
+
+    const seenLabels = new Set();
+    const buttons = rawCandidates.filter((element) => {
+      const label = (element.innerText || element.textContent || element.getAttribute("aria-label") || element.getAttribute("title") || "").trim();
+      if (!isLikelyRepresentativeAction(element, label)) {
+        return false;
+      }
+      const key = getNormalizedFlowLabel(label);
+      if (!key || seenLabels.has(key)) {
+        return false;
+      }
+      seenLabels.add(key);
+      return true;
+    });
+
+    const suggestions = [];
+    for (const [index, element] of buttons.entries()) {
+      try {
+        const label = (element.innerText || element.textContent || element.getAttribute("aria-label") || element.getAttribute("title") || "").trim();
+        const count = labelCounts.get(getNormalizedFlowLabel(label)) || 1;
+        const suggestion = await resolveButtonFlowSuggestion(element, index);
+        if (scanId !== suggestionScanSerial) return;
+        if (suggestion) {
+          suggestion.occurrenceCount = count;
+          suggestions.push(suggestion);
+        }
+      } catch {
+        // Fall back to legacy suggestions when resolution fails.
+      }
+    }
+
+    if (scanId !== suggestionScanSerial) return;
+
+    if (suggestions.length === 0) {
+      suggestions.push(...buildLegacySuggestions());
+      state.testSuggestionsMessage = suggestions.length
+        ? "Could not resolve code-backed button flows on this page, so showing interactive fallbacks."
+        : "No actionable buttons or forms were found on this page.";
+    } else {
+      state.testSuggestionsMessage = "Resolved " + suggestions.length + " button flow" + (suggestions.length === 1 ? "" : "s") + " from the current page.";
+    }
+
+    state.testSuggestions = suggestions;
+    state.testSuggestionsLoading = false;
+    renderSuggestions();
+    renderActionBuilder();
   }
 
   function useSuggestedTest(index) {
@@ -2451,9 +3178,12 @@ export function renderOverlayScript(agentBaseUrl: string) {
   function renderState() {
     const repairState = state.localRun?.active ? state.localRun.snapshot : state.repairState;
     const socketLabel = state.socketState === "open" ? "Connected" : prettifyStage(state.socketState);
+    const activeProvider = getActiveProvider(repairState);
+    const activeModel = getActiveModel(repairState);
     els.status.textContent = socketLabel;
     els.status.dataset.tone = getStatusTone();
-    els.connectionValue.textContent = socketLabel;
+    els.modelBadge.textContent = "LLM: " + prettifyProvider(activeProvider);
+    els.modelValue.textContent = prettifyProvider(activeProvider) + " / " + activeModel;
 
     if (repairState) {
       const copy = stageCopy[repairState.stage] || {
@@ -2471,12 +3201,22 @@ export function renderOverlayScript(agentBaseUrl: string) {
       els.stageValue.textContent = prettifyStage(repairState.stage);
       els.approvalValue.textContent = state.pendingPatch || state.repairState?.stage === "tracing_issue" || state.repairState?.stage === "proposing_patch" || state.repairState?.stage === "awaiting_approval" ? "Review in progress" : "No pending decisions";
       els.nextStep.textContent = copy.next;
+      const primaryFlow = repairState.primaryFlow;
+      const flowMeta = primaryFlow
+        ? [
+            "<div><strong>Primary flow:</strong> " + escapeHtml(primaryFlow.label) + "</div>",
+            "<div><strong>Flow steps:</strong> " + String(primaryFlow.browserActions.length) + " actions</div>",
+            "<div><strong>Replay start:</strong> " + escapeHtml(primaryFlow.startUrl) + "</div>",
+            primaryFlow.failingAction
+              ? "<div><strong>Last failed step:</strong> " + escapeHtml(primaryFlow.failingAction.kind + " " + primaryFlow.failingAction.target) + "</div>"
+              : "<div><strong>Replay status:</strong> Ready to rerun the same flow after approval.</div>",
+          ]
+        : [];
       els.guidance.textContent = repairState.detail || copy.detail;
       els.runMeta.innerHTML = [
-        "<div><strong>Current detail:</strong> " + escapeHtml(repairState.detail || "No detail provided.") + "</div>",
-        "<div><strong>Run summary:</strong> " + escapeHtml(repairState.run.summary || "No run summary available.") + "</div>",
-        "<div><strong>Expected outcome:</strong> " + escapeHtml(repairState.run.expectedOutcome || "Not specified.") + "</div>",
+        "<div><strong>Summary:</strong> " + escapeHtml(repairState.run.summary || repairState.detail || "No summary available.") + "</div>",
         "<div><strong>Last update:</strong> " + escapeHtml(formatTime(repairState.timestamp) || "Unknown") + "</div>",
+        ...flowMeta,
       ].join("");
       applyHighlight(repairState.run.targetSelector);
     } else {
@@ -2486,8 +3226,10 @@ export function renderOverlayScript(agentBaseUrl: string) {
       els.stageBadge.dataset.tone = "neutral";
       els.goalValue.textContent = "Not available";
       els.stageValue.textContent = "Not available";
+      els.guidance.textContent = "Waiting for the first run update.";
       els.approvalValue.textContent = state.pendingPatch ? "Decision required" : "No pending decisions";
       els.nextStep.textContent = "Start a repair run or wait for the local agent to publish its first update.";
+      els.runMeta.innerHTML = "<div><strong>Connection:</strong> " + escapeHtml(socketLabel) + "</div>";
     }
 
     renderPendingPatch();
@@ -2519,16 +3261,20 @@ export function renderOverlayScript(agentBaseUrl: string) {
         badge.style.display = "";
       }
     }
-    if (!state.configText) {
-      const config = { ...payload.config, appUrl: window.location.origin };
-      state.configText = JSON.stringify(config, null, 2);
-      els.config.value = state.configText;
-      persistOverlayState();
-    } else {
-      els.config.value = state.configText;
-    }
+    const config = {
+      ...payload.config,
+      appUrl: window.location.origin,
+      llmProvider: payload.config?.llmProvider || "openrouter",
+      llmFallbackProvider: payload.config?.llmFallbackProvider ?? "zai",
+    };
+    state.configText = JSON.stringify(config, null, 2);
+    els.config.value = state.configText;
+    persistOverlayState();
     validateConfigEditor();
     renderState();
+    if (!state.testSuggestions.length || state.testSuggestionsMessage.startsWith("Could not resolve")) {
+      void buildSuggestedTests();
+    }
   }
 
   async function postJson(path, body) {
@@ -2543,7 +3289,11 @@ export function renderOverlayScript(agentBaseUrl: string) {
   }
 
   toggle.addEventListener("click", () => {
-    setCollapsed(root.className !== "reform-collapsed" ? true : false);
+    if (state.editModeEnabled) {
+      exitEditModeAndOpenOverlay();
+      return;
+    }
+    setCollapsed(false);
   });
 
   els.collapseButton.addEventListener("click", () => {
@@ -2554,6 +3304,10 @@ export function renderOverlayScript(agentBaseUrl: string) {
     state.recorderEnabled = !state.recorderEnabled;
     renderRecorder();
     persistOverlayState();
+  });
+
+  els.editModeToggle.addEventListener("click", async () => {
+    await toggleEditMode();
   });
 
   els.actionKind.addEventListener("change", () => {
@@ -2577,7 +3331,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
   });
 
   els.scanButton.addEventListener("click", () => {
-    buildSuggestedTests();
+    void buildSuggestedTests();
     renderActionBuilder();
   });
 
@@ -2600,10 +3354,51 @@ export function renderOverlayScript(agentBaseUrl: string) {
     useSuggestedTest(index);
   });
 
+  let routeObserverInstalled = false;
+  function refreshSuggestionsForCurrentRoute() {
+    if (!state.testSuggestionsLoading) {
+      void buildSuggestedTests();
+    }
+  }
+
+  function installRouteObservers() {
+    if (routeObserverInstalled) return;
+    routeObserverInstalled = true;
+
+    const rerun = () => {
+      refreshSuggestionsForCurrentRoute();
+    };
+
+    window.addEventListener("popstate", rerun);
+    window.addEventListener("hashchange", rerun);
+
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+    history.pushState = function (...args) {
+      const result = originalPushState.apply(this, args);
+      window.dispatchEvent(new Event("reform:locationchange"));
+      return result;
+    };
+    history.replaceState = function (...args) {
+      const result = originalReplaceState.apply(this, args);
+      window.dispatchEvent(new Event("reform:locationchange"));
+      return result;
+    };
+    window.addEventListener("reform:locationchange", rerun);
+  }
+
   els.config.addEventListener("input", () => {
     state.configText = els.config.value;
     validateConfigEditor();
     persistOverlayState();
+  });
+
+  els.llmProvider.addEventListener("change", () => {
+    updateConfigFromLlmControls();
+  });
+
+  els.llmModel.addEventListener("input", () => {
+    updateConfigFromLlmControls();
   });
 
   els.runButton.addEventListener("click", async () => {
@@ -2632,97 +3427,124 @@ export function renderOverlayScript(agentBaseUrl: string) {
     await postJson("/reject");
   });
 
-  const socket = new WebSocket(WS_URL);
-  socket.addEventListener("open", () => {
-    state.socketState = "open";
-    renderState();
-  });
-  socket.addEventListener("close", () => {
-    state.socketState = "closed";
-    renderState();
-  });
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(event.data);
-    if (message.type === "state") {
-      const previousStage = state.repairState ? state.repairState.stage : null;
-      state.repairState = message.payload;
-      flagTabActivity("monitor", "activity");
-      if (message.payload.screenshots?.beforePath || message.payload.screenshots?.afterPath) {
-        flagTabActivity("evidence", "activity");
-      }
-      if (message.payload.stage !== previousStage) {
-        pushTimelineEntry({
-          kind: "stage",
-          timestamp: message.payload.timestamp || new Date().toISOString(),
-          title: prettifyStage(message.payload.stage),
-          detail: message.payload.detail || "Stage updated.",
-        });
-      }
-      if (!message.payload.pendingPatch) {
-        state.pendingPatch = null;
-      }
-      if (
-        state.localRun?.awaitingPatchedRetry &&
-        message.payload.stage === "needs_review" &&
-        /Patch applied from captured same-tab failure evidence/i.test(message.payload.detail || "")
-      ) {
-        const nextRetryCount = (state.localRun.snapshot.run.retryCount ?? 1) + 1;
-        if (nextRetryCount <= (state.localRun.snapshot.run.maxRetries ?? 3)) {
-          pushLocalLog("info", "local_runner_retrying: Replaying the same-tab flow after the approved patch.");
-          window.setTimeout(() => {
-            void startLocalRun(state.localRun.config);
-          }, 1200);
-        } else {
-          state.localRun.awaitingPatchedRetry = false;
-          pushLocalLog("warn", "local_runner_retry_limit: Reached the maximum same-tab replay attempts after patching.");
-        }
-      }
-      if (message.payload.stage === "verified" && message.payload.stage !== previousStage) {
-        triggerSuccessBurst();
+  let socket = null;
+  let reconnectTimer = null;
+  let manualSocketClose = false;
+
+  function scheduleSocketReconnect() {
+    if (reconnectTimer) return;
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      state.socketState = "connecting";
+      renderState();
+      connectSocket();
+    }, 1200);
+  }
+
+  function connectSocket() {
+    if (socket && socket.readyState === WebSocket.OPEN) return;
+    socket = new WebSocket(WS_URL);
+    socket.addEventListener("open", () => {
+      manualSocketClose = false;
+      state.socketState = "open";
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
       }
       renderState();
-    }
-    if (message.type === "log") {
-      flagTabActivity("monitor", "activity");
-      state.logs.push(message.payload);
-      if (message.payload.level !== "info" || /primary_flow_passed|approval|failed|verified|needs_review/i.test(message.payload.message || "")) {
+    });
+    socket.addEventListener("close", () => {
+      state.socketState = "closed";
+      renderState();
+      if (!manualSocketClose) {
+        scheduleSocketReconnect();
+      }
+    });
+    socket.addEventListener("message", (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type === "state") {
+        const previousStage = state.repairState ? state.repairState.stage : null;
+        state.repairState = message.payload;
+        flagTabActivity("monitor", "activity");
+        if (message.payload.screenshots?.beforePath || message.payload.screenshots?.afterPath) {
+          flagTabActivity("evidence", "activity");
+        }
+        if (message.payload.stage !== previousStage) {
+          pushTimelineEntry({
+            kind: "stage",
+            timestamp: message.payload.timestamp || new Date().toISOString(),
+            title: prettifyStage(message.payload.stage),
+            detail: message.payload.detail || "Stage updated.",
+          });
+        }
+        if (!message.payload.pendingPatch) {
+          state.pendingPatch = null;
+        }
+        if (
+          state.localRun?.awaitingPatchedRetry &&
+          message.payload.stage === "needs_review" &&
+          /Patch applied from captured same-tab failure evidence/i.test(message.payload.detail || "")
+        ) {
+          const nextRetryCount = (state.localRun.snapshot.run.retryCount ?? 1) + 1;
+          if (nextRetryCount <= (state.localRun.snapshot.run.maxRetries ?? 3)) {
+            pushLocalLog("info", "local_runner_retrying: Replaying the same-tab flow after the approved patch.");
+            window.setTimeout(() => {
+              void startLocalRun(state.localRun.config);
+            }, 1200);
+          } else {
+            state.localRun.awaitingPatchedRetry = false;
+            pushLocalLog("warn", "local_runner_retry_limit: Reached the maximum same-tab replay attempts after patching.");
+          }
+        }
+        if (message.payload.stage === "verified" && message.payload.stage !== previousStage) {
+          triggerSuccessBurst();
+        }
+        renderState();
+      }
+      if (message.type === "log") {
+        flagTabActivity("monitor", "activity");
+        state.logs.push(message.payload);
+        if (message.payload.level !== "info" || /primary_flow_passed|approval|failed|verified|needs_review/i.test(message.payload.message || "")) {
+          pushTimelineEntry({
+            kind: "log",
+            timestamp: message.payload.timestamp || new Date().toISOString(),
+            title: message.payload.level === "error" ? "Error Event" : message.payload.level === "warn" ? "Warning Event" : "Run Event",
+            detail: message.payload.message || "",
+          });
+        }
+        renderLogs();
+        renderTimeline();
+      }
+      if (message.type === "logs") {
+        state.logs = message.payload;
+        renderLogs();
+      }
+      if (message.type === "approval_requested") {
+        state.pendingPatch = message.payload;
+        flagTabActivity("review", "attention");
+        if (state.activeTab !== "review") {
+          switchTab("review");
+        }
         pushTimelineEntry({
-          kind: "log",
-          timestamp: message.payload.timestamp || new Date().toISOString(),
-          title: message.payload.level === "error" ? "Error Event" : message.payload.level === "warn" ? "Warning Event" : "Run Event",
-          detail: message.payload.message || "",
+          kind: "approval",
+          timestamp: new Date().toISOString(),
+          title: "Patch Approval Requested",
+          detail: message.payload.rationale || "A patch proposal is ready for review.",
         });
+        renderPendingPatch();
+        renderTimeline();
       }
-      renderLogs();
-      renderTimeline();
-    }
-    if (message.type === "logs") {
-      state.logs = message.payload;
-      renderLogs();
-    }
-    if (message.type === "approval_requested") {
-      state.pendingPatch = message.payload;
-      flagTabActivity("review", "attention");
-      if (state.activeTab !== "review") {
-        switchTab("review");
-      }
-      pushTimelineEntry({
-        kind: "approval",
-        timestamp: new Date().toISOString(),
-        title: "Patch Approval Requested",
-        detail: message.payload.rationale || "A patch proposal is ready for review.",
-      });
-      renderPendingPatch();
-      renderTimeline();
-    }
-  });
+    });
+  }
 
+  connectSocket();
   getHealth().catch((error) => {
     state.logs.push({ id: String(Date.now()), timestamp: new Date().toISOString(), level: "error", message: error.message });
     renderLogs();
   });
 
-  buildSuggestedTests();
+  installRouteObservers();
+  void buildSuggestedTests();
   renderActionBuilder();
   maybeResumeLocalRun();
   const handleResize = () => {
@@ -2736,10 +3558,17 @@ export function renderOverlayScript(agentBaseUrl: string) {
   document.addEventListener("change", handleRecordingChange, true);
 
   window.__REFORM_OVERLAY__ = {
-    open() { setCollapsed(false); },
+    open() {
+      if (state.editModeEnabled) {
+        exitEditModeAndOpenOverlay();
+        return;
+      }
+      setCollapsed(false);
+    },
     close() { setCollapsed(true); },
     destroy() {
-      socket.close();
+      manualSocketClose = true;
+      socket?.close();
       document.removeEventListener("click", handleRecordingClick, true);
       document.removeEventListener("focusin", handleRecordingInput, true);
       document.removeEventListener("change", handleRecordingChange, true);
@@ -2756,55 +3585,15 @@ export function renderOverlayScript(agentBaseUrl: string) {
   setCollapsed(state.collapsed);
   updateOverlayWidth();
   updateApprovalPopoutPosition();
-
-  // Inject edit mode toggle button
-  setTimeout(() => {
-    const headerActions = root.querySelector(".reform-header-actions");
-    if (headerActions && !document.getElementById("reform-edit-mode-toggle")) {
-      const editToggle = document.createElement("button");
-      editToggle.id = "reform-edit-mode-toggle";
-      editToggle.className = "reform-button-soft";
-      editToggle.textContent = "Edit Mode";
-      editToggle.style.marginLeft = "8px";
-      editToggle.onclick = async () => {
-        if (!window.__REFORM_EDIT_MODE__) {
-          const script = document.createElement("script");
-          script.src = AGENT_BASE_URL + "/edit-mode.js";
-          document.head.appendChild(script);
-          await new Promise(r => script.onload = r);
-        }
-        if (state.editModeEnabled) {
-          window.__REFORM_EDIT_MODE__.disable();
-          editToggle.textContent = "Edit Mode";
-          editToggle.style.background = "";
-          state.editModeEnabled = false;
-        } else {
-          window.__REFORM_EDIT_MODE__.enable();
-          editToggle.textContent = "Exit Edit";
-          editToggle.style.background = "linear-gradient(135deg, #ffb47a, #ff7d7d)";
-          state.editModeEnabled = true;
-        }
-        persistOverlayState();
-      };
-      headerActions.appendChild(editToggle);
-
-      // Restore edit mode state if previously enabled
-      if (state.editModeEnabled) {
-        (async () => {
-          if (!window.__REFORM_EDIT_MODE__) {
-            const script = document.createElement("script");
-            script.src = AGENT_BASE_URL + "/edit-mode.js";
-            document.head.appendChild(script);
-            await new Promise(r => script.onload = r);
-          }
-          setTimeout(() => {
-            window.__REFORM_EDIT_MODE__?.enable();
-            editToggle.textContent = "Exit Edit";
-            editToggle.style.background = "linear-gradient(135deg, #ffb47a, #ff7d7d)";
-          }, 200);
-        })();
-      }
-    }
-  }, 100);
+  renderEditToggle();
+  applyEditModeVisuals(state.editModeEnabled);
+  if (state.editModeEnabled) {
+    (async () => {
+      await ensureEditModeScript();
+      window.setTimeout(() => {
+        window.__REFORM_EDIT_MODE__?.enable();
+      }, 200);
+    })();
+  }
 })();`;
 }

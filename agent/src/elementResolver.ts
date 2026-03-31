@@ -78,6 +78,14 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function normalizeRouteLiteral(route: string) {
+  if (!route) return "/";
+  const withoutOrigin = route.replace(/^https?:\/\/[^/]+/i, "");
+  const withoutQuery = withoutOrigin.split(/[?#]/, 1)[0] || "/";
+  const normalized = withoutQuery.startsWith("/") ? withoutQuery : `/${withoutQuery}`;
+  return normalized === "/" ? normalized : normalized.replace(/\/+$/, "");
+}
+
 function findComponentInFile(content: string, componentName: string): number | null {
   const patterns = [
     // Function/class declarations
@@ -111,6 +119,84 @@ function findComponentInFile(content: string, componentName: string): number | n
   }
 
   return null;
+}
+
+async function findBestComponentDefinition(
+  projectRoot: string,
+  files: string[],
+  componentName: string,
+): Promise<{ filePath: string; lineNumber: number; content: string } | null> {
+  let best: { filePath: string; lineNumber: number; content: string; score: number } | null = null;
+  const normalizedName = componentName.toLowerCase();
+
+  for (const absolutePath of files) {
+    try {
+      const content = await readFile(absolutePath, "utf-8");
+      const lineNumber = findComponentInFile(content, componentName);
+      if (lineNumber === null) continue;
+
+      const relativePath = path.relative(projectRoot, absolutePath);
+      let score = 20;
+
+      if (relativePath.toLowerCase().includes(normalizedName)) {
+        score += 40;
+      }
+
+      if (componentDirPatterns.some((dir) => relativePath.includes(dir))) {
+        score += 15;
+      }
+
+      if (routeDirPatterns.generic.some((dir) => relativePath.includes(dir + "/"))) {
+        score -= 5;
+      }
+
+      if (/\bapp\.(tsx|ts|jsx|js)$/i.test(relativePath) || /\bmain\.(tsx|ts|jsx|js)$/i.test(relativePath)) {
+        score -= 10;
+      }
+
+      if (!best || score > best.score) {
+        best = { filePath: relativePath, lineNumber, content, score };
+      }
+    } catch {
+      // Skip unreadable files.
+    }
+  }
+
+  return best ? { filePath: best.filePath, lineNumber: best.lineNumber, content: best.content } : null;
+}
+
+function extractReactRouterRouteComponentNames(content: string, pathname: string): string[] {
+  const normalizedPath = normalizeRouteLiteral(pathname);
+  const escapedPath = escapeRegExp(normalizedPath);
+  const names = new Set<string>();
+  const patterns = [
+    new RegExp(
+      `<Route\\b[^>]*path\\s*=\\s*["'\`]${escapedPath}["'\`][^>]*element\\s*=\\s*\\{\\s*<([A-Z][A-Za-z0-9_]*)\\b`,
+      "g",
+    ),
+    new RegExp(
+      `<Route\\b[^>]*element\\s*=\\s*\\{\\s*<([A-Z][A-Za-z0-9_]*)\\b[^}]*\\}\\s*[^>]*path\\s*=\\s*["'\`]${escapedPath}["'\`]`,
+      "g",
+    ),
+    new RegExp(
+      `path\\s*=\\s*["'\`]${escapedPath}["'\`][\\s\\S]{0,240}?element\\s*=\\s*\\{\\s*<([A-Z][A-Za-z0-9_]*)\\b`,
+      "g",
+    ),
+    new RegExp(
+      `path\\s*=\\s*["'\`]${escapedPath}["'\`][\\s\\S]{0,240}?Component\\s*=\\s*\\{\\s*([A-Z][A-Za-z0-9_]*)\\b`,
+      "g",
+    ),
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of content.matchAll(pattern)) {
+      if (match[1]) {
+        names.add(match[1]);
+      }
+    }
+  }
+
+  return [...names];
 }
 
 // Find files that import the component
@@ -367,6 +453,22 @@ export async function resolveElementToFile(
 
   // Strategy 0: URL-based route detection (highest confidence if available)
   if (currentUrl) {
+    const currentPathname = normalizeRouteLiteral(new URL(currentUrl).pathname);
+    for (const absolutePath of files) {
+      const content = await readFile(absolutePath, "utf-8");
+      for (const componentName of extractReactRouterRouteComponentNames(content, currentPathname)) {
+        const componentFile = await findBestComponentDefinition(projectRoot, files, componentName);
+        if (componentFile) {
+          return {
+            filePath: componentFile.filePath,
+            lineNumber: componentFile.lineNumber,
+            content: componentFile.content,
+            confidence: 0.95,
+          };
+        }
+      }
+    }
+
     const routeCandidates = findRouteFiles(projectRoot, currentUrl, files);
     if (routeCandidates.length > 0) {
       // If we have component names, check if they exist in route files

@@ -1,7 +1,7 @@
 {
   "run": {
-    "id": "run_1774896370652",
-    "goal": "Sign up and reach dashboard",
+    "id": "run_1774936535683",
+    "goal": "Add a product to the cart and verify it appears on the cart page",
     "expectedOutcome": "Primary flow succeeds and regression checks stay healthy.",
     "stage": "observing",
     "summary": "Waiting for the browser run to begin.",
@@ -9,11 +9,13 @@
     "maxRetries": 3
   },
   "config": {
-    "goal": "Sign up and reach dashboard",
-    "projectRoot": "/home/deimos/Projects/mandax-web",
+    "goal": "Add a product to the cart and verify it appears on the cart page",
+    "projectRoot": "/home/deimos/Projects/demo-target",
     "appUrl": "http://127.0.0.1:5173",
     "requireApproval": true,
-    "model": "glm-4.7",
+    "llmProvider": "openrouter",
+    "llmFallbackProvider": "zai",
+    "model": "openai/gpt-4.1-mini",
     "visualPlayback": {
       "headless": false,
       "showCursor": true,
@@ -23,22 +25,40 @@
     "browserActions": [
       {
         "kind": "goto",
-        "target": "/"
+        "target": "/products"
       },
       {
         "kind": "click",
-        "target": "button"
+        "target": "text:Add to Cart"
+      },
+      {
+        "kind": "wait_for_text",
+        "target": "Cart (1)"
+      },
+      {
+        "kind": "click",
+        "target": "text:Cart"
+      },
+      {
+        "kind": "wait_for_text",
+        "target": "Mechanical Keyboard"
       }
     ],
     "regressionChecks": [
       {
-        "path": "/"
+        "path": "/products",
+        "expectText": "Mechanical Keyboard"
+      },
+      {
+        "path": "/products",
+        "expectText": "Wireless Mouse"
       }
     ]
   },
   "stage": "observing",
   "timestamp": "",
   "detail": "Waiting for the agent to start the flow.",
+  "primaryFlow": null,
   "evidence": {
     "consoleErrors": [],
     "networkFailures": [],
