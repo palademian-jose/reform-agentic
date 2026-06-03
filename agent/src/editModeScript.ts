@@ -101,6 +101,7 @@ export function renderEditModeScript(agentBaseUrl: string) {
       color: #f6f1e7 !important;
       display: none !important;
       overflow: hidden !important;
+      flex-direction: column !important;
       pointer-events: auto !important;
       opacity: 0 !important;
       transform: translate3d(0, 8px, 0) scale(0.98) !important;
@@ -108,12 +109,13 @@ export function renderEditModeScript(agentBaseUrl: string) {
       will-change: left, top, transform, opacity !important;
       transition: opacity 140ms ease, transform 140ms ease !important;
     }
-    .reform-edit-popup.visible { display: block !important; opacity: 1 !important; transform: translate3d(0, 0, 0) scale(1) !important; visibility: visible !important; }
+    .reform-edit-popup.visible { display: flex !important; opacity: 1 !important; transform: translate3d(0, 0, 0) scale(1) !important; visibility: visible !important; }
     .reform-edit-popup[data-dragging="true"] {
       transition: none !important;
       cursor: grabbing !important;
     }
     .reform-edit-popup-header {
+      flex: 0 0 auto !important;
       padding: 16px 16px 14px !important;
       border-bottom: 1px solid rgba(255,255,255,0.08) !important;
       background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0)) !important;
@@ -134,7 +136,42 @@ export function renderEditModeScript(agentBaseUrl: string) {
     }
     .reform-edit-popup-header h4 { margin: 0 0 4px !important; font-size: 14px !important; color: #c8d7ff !important; }
     .reform-edit-popup-header p { margin: 0 !important; font-size: 11px !important; color: rgba(255,255,255,0.68) !important; line-height: 1.45 !important; }
-    .reform-edit-popup-body { padding: 14px 16px 16px !important; display: grid !important; gap: 12px !important; overflow: auto !important; }
+    .reform-edit-popup-body {
+      flex: 1 1 auto !important;
+      min-height: 0 !important;
+      padding: 14px 16px 16px !important;
+      display: grid !important;
+      align-content: start !important;
+      gap: 12px !important;
+      overflow-y: auto !important;
+      overflow-x: hidden !important;
+      overscroll-behavior: contain !important;
+      scrollbar-width: thin !important;
+      scrollbar-color: rgba(108, 159, 255, 0.72) rgba(255,255,255,0.06) !important;
+    }
+    .reform-edit-popup-body::-webkit-scrollbar,
+    .reform-progress-proposal::-webkit-scrollbar,
+    .reform-progress-files::-webkit-scrollbar {
+      width: 10px !important;
+    }
+    .reform-edit-popup-body::-webkit-scrollbar-track,
+    .reform-progress-proposal::-webkit-scrollbar-track,
+    .reform-progress-files::-webkit-scrollbar-track {
+      background: rgba(255,255,255,0.05) !important;
+      border-radius: 999px !important;
+    }
+    .reform-edit-popup-body::-webkit-scrollbar-thumb,
+    .reform-progress-proposal::-webkit-scrollbar-thumb,
+    .reform-progress-files::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, rgba(108, 159, 255, 0.9), rgba(159, 226, 193, 0.85)) !important;
+      border-radius: 999px !important;
+      border: 2px solid rgba(13, 17, 26, 0.55) !important;
+    }
+    .reform-edit-popup-body::-webkit-scrollbar-thumb:hover,
+    .reform-progress-proposal::-webkit-scrollbar-thumb:hover,
+    .reform-progress-files::-webkit-scrollbar-thumb:hover {
+      background: linear-gradient(180deg, rgba(130, 179, 255, 0.96), rgba(185, 241, 217, 0.92)) !important;
+    }
     .reform-edit-popup-section {
       display: grid !important;
       gap: 10px !important;
@@ -323,6 +360,14 @@ export function renderEditModeScript(agentBaseUrl: string) {
       display: grid !important;
       gap: 8px !important;
     }
+    .reform-progress-proposal {
+      max-height: min(52vh, 420px) !important;
+      overflow-y: auto !important;
+      overflow-x: hidden !important;
+      padding-right: 8px !important;
+      scrollbar-width: thin !important;
+      scrollbar-color: rgba(108, 159, 255, 0.72) rgba(255,255,255,0.06) !important;
+    }
     .reform-progress-nextsteps {
       border-left: 3px solid rgba(255, 193, 106, 0.95) !important;
     }
@@ -361,6 +406,11 @@ export function renderEditModeScript(agentBaseUrl: string) {
       border-radius: 12px !important;
       background: rgba(0,0,0,0.16) !important;
       border: 1px solid rgba(255,255,255,0.05) !important;
+      max-height: 180px !important;
+      overflow-y: auto !important;
+      overflow-x: hidden !important;
+      scrollbar-width: thin !important;
+      scrollbar-color: rgba(108, 159, 255, 0.72) rgba(255,255,255,0.06) !important;
     }
     .reform-progress-file {
       display: flex !important;
@@ -378,6 +428,14 @@ export function renderEditModeScript(agentBaseUrl: string) {
       gap: 10px !important;
       flex-wrap: wrap !important;
       padding-top: 2px !important;
+    }
+    #reform-proposal-actions {
+      position: sticky !important;
+      bottom: -12px !important;
+      padding-top: 10px !important;
+      padding-bottom: 2px !important;
+      background: linear-gradient(180deg, rgba(13,17,26,0), rgba(13,17,26,0.96) 28%, rgba(13,17,26,0.98)) !important;
+      margin-top: 4px !important;
     }
     #reform-edit-status-card {
       position: fixed !important;
@@ -577,6 +635,29 @@ export function renderEditModeScript(agentBaseUrl: string) {
   document.body.appendChild(statusCard);
 
   // --- Component name extraction ---
+  function readReactComponentName(type) {
+    if (!type || typeof type === 'string') return null;
+
+    const candidates = [
+      type.displayName,
+      type.name,
+      type.render?.displayName,
+      type.render?.name,
+      type.type?.displayName,
+      type.type?.name,
+      type.type?.render?.displayName,
+      type.type?.render?.name,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+
+    return null;
+  }
+
   function extractComponentInfo(el) {
     if (!el) return { componentName: null, parentComponentNames: [] };
 
@@ -586,12 +667,9 @@ export function renderEditModeScript(agentBaseUrl: string) {
     if (fiberKey) {
       let fiber = el[fiberKey];
       while (fiber) {
-        const fiberType = fiber.type;
-        if (fiberType && (typeof fiberType === 'function' || typeof fiberType === 'object')) {
-          const name = fiberType.displayName || fiberType.name || null;
-          if (name && !parentNames.includes(name)) {
+        const name = readReactComponentName(fiber.type);
+        if (name && !parentNames.includes(name)) {
             parentNames.push(name);
-          }
         }
         fiber = fiber.return;
       }
@@ -626,23 +704,82 @@ export function renderEditModeScript(agentBaseUrl: string) {
     const rect = el.getBoundingClientRect();
     const componentInfo = extractComponentInfo(el);
 
+    // Capture ALL attributes, not just data-*
     const attributes = {};
     for (const attr of el.attributes || []) {
-      if (attr.name.startsWith('data-')) {
-        attributes[attr.name] = attr.value;
-      }
+      attributes[attr.name] = attr.value;
     }
+
+    // Capture child elements structure
+    const children = [];
+    for (let i = 0; i < Math.min(el.children.length, 20); i++) {
+      const child = el.children[i];
+      const childAttrs = {};
+      for (const attr of child.attributes || []) {
+        childAttrs[attr.name] = attr.value;
+      }
+      children.push({
+        tagName: child.tagName.toLowerCase(),
+        id: child.id || null,
+        className: typeof child.className === 'string' ? child.className : '',
+        textContent: (child.textContent || '').slice(0, 100),
+        attributes: childAttrs,
+      });
+    }
+
+    const descendants = [];
+    const descendantNodes = el.querySelectorAll('*');
+    for (let i = 0; i < Math.min(descendantNodes.length, 40); i++) {
+      const node = descendantNodes[i];
+      const nodeAttrs = {};
+      for (const attr of node.attributes || []) {
+        nodeAttrs[attr.name] = attr.value;
+      }
+      let depth = 0;
+      let parent = node.parentElement;
+      while (parent && parent !== el) {
+        depth += 1;
+        parent = parent.parentElement;
+      }
+      descendants.push({
+        tagName: node.tagName.toLowerCase(),
+        id: node.id || null,
+        className: typeof node.className === 'string' ? node.className : '',
+        textContent: (node.textContent || '').trim().slice(0, 120),
+        depth,
+        attributes: nodeAttrs,
+      });
+    }
+
+    // Get the outerHTML to see the full structure (but limit size)
+    let outerHTML = '';
+    try {
+      outerHTML = el.outerHTML.slice(0, 5000);
+    } catch {
+      // Some elements can't be serialized
+      outerHTML = el.innerHTML.slice(0, 3000);
+    }
+
+    // Count direct children and total descendants
+    const childCount = el.children.length;
+    const totalDescendants = el.querySelectorAll('*').length;
 
     return {
       tagName: el.tagName.toLowerCase(),
       id: el.id || null,
       className: typeof el.className === 'string' ? el.className : '',
-      textContent: (el.textContent || '').slice(0, 300),
+      textContent: (el.textContent || '').slice(0, 500),
+      innerHTML: el.innerHTML.slice(0, 3000),
+      outerHTML: outerHTML,
       attributes,
       boundingBox: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
       componentName: componentInfo.componentName,
       parentComponentNames: componentInfo.parentComponentNames,
       cssSelector: el.id ? '#' + el.id : el.tagName.toLowerCase(),
+      children: children,
+      descendants: descendants,
+      childCount: childCount,
+      totalDescendants: totalDescendants,
     };
   }
 
@@ -673,6 +810,7 @@ export function renderEditModeScript(agentBaseUrl: string) {
   // --- Progress tracking ---
   const progressSteps = [];
   let progressTimer = null;
+  let pendingRefreshTimer = null;
 
   function escapeHtml(text) {
     return String(text).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
@@ -869,6 +1007,26 @@ export function renderEditModeScript(agentBaseUrl: string) {
     statusCard.classList.add('visible');
   }
 
+  function clearPendingRefresh() {
+    if (pendingRefreshTimer) {
+      clearTimeout(pendingRefreshTimer);
+      pendingRefreshTimer = null;
+    }
+  }
+
+  function schedulePageRefresh(copy) {
+    clearPendingRefresh();
+    showStatusCard(
+      'Refreshing page',
+      copy || 'Refreshing the page so the latest UI changes are visible immediately.',
+      { showRevert: false, closeLabel: 'Hide' },
+    );
+    pendingRefreshTimer = setTimeout(() => {
+      pendingRefreshTimer = null;
+      window.location.reload();
+    }, 900);
+  }
+
   async function restoreAppliedSession(proposalId) {
     if (!proposalId) return;
     try {
@@ -888,6 +1046,7 @@ export function renderEditModeScript(agentBaseUrl: string) {
         editState.activeProposalId = proposalId;
         editState.pendingApplyProposalId = null;
         persistState();
+        clearPendingRefresh();
         showStatusCard(
           'Edit applied',
           'The target app reloaded, but Reform kept the previous file snapshot. You can revert this edit at any time.',
@@ -931,11 +1090,7 @@ export function renderEditModeScript(agentBaseUrl: string) {
         throw new Error(data.message || 'Revert failed');
       }
       clearPersistedProposalState();
-      showStatusCard(
-        'Edit reverted',
-        'The original code was restored. The target app may refresh again while the dev server rebuilds.',
-        { showRevert: false, closeLabel: 'Close' },
-      );
+      schedulePageRefresh('The original code was restored. Refreshing the page so the reverted UI is rendered immediately.');
     } catch (err) {
       closeBtn.disabled = false;
       revertBtn.disabled = false;
@@ -1303,11 +1458,10 @@ export function renderEditModeScript(agentBaseUrl: string) {
         okDiv.style.color = '#9fe2c1';
         okDiv.textContent = 'Changes applied. Reform kept a revert snapshot.';
         proposalContainer.appendChild(okDiv);
-        showStatusCard(
-          'Edit applied',
-          'The target app may reload now. Reform kept the previous file snapshot so you can revert after the rebuild.',
-        );
-        setTimeout(() => hidePopup(), 1200);
+        setTimeout(() => {
+          hidePopup();
+          schedulePageRefresh('Refreshing the page so the approved UI changes are visible immediately. Reform will restore the revert controls after reload.');
+        }, 400);
       } catch (err) {
         console.error('Apply failed:', err);
         applyBtn.disabled = false;
@@ -1454,6 +1608,7 @@ export function renderEditModeScript(agentBaseUrl: string) {
     destroy() {
       this.disable();
       closeWebSocket();
+      clearPendingRefresh();
       window.removeEventListener("pointermove", movePopupDrag);
       window.removeEventListener("pointerup", endPopupDrag);
       window.removeEventListener("pointercancel", endPopupDrag);

@@ -29,9 +29,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
 const runtimeDir = path.join(rootDir, "agent/runtime");
-const dashboardStateFile = path.join(rootDir, "dashboard/public/repair-state.json");
-const sandboxStateFile = path.join(rootDir, "sandbox-app/public/repair-state.json");
-const dashboardRuntimeDir = path.join(rootDir, "dashboard/public/runtime");
+const runtimeAssetsDir = path.join(runtimeDir, "assets");
 
 const emptyEvidence: EvidenceSummary = {
   consoleErrors: [],
@@ -86,7 +84,7 @@ function createRun(config: RunConfig): GoalRun {
     stage: "observing",
     summary: "Waiting for the browser run to begin.",
     retryCount: 0,
-    maxRetries: 3,
+    maxRetries: config.maxRetries,
   };
 }
 
@@ -109,12 +107,7 @@ function createInitialSnapshot(config: RunConfig): RepairStateSnapshot {
 async function persistSnapshot(snapshot: RepairStateSnapshot) {
   const payload = `${JSON.stringify(snapshot, null, 2)}\n`;
   await mkdir(runtimeDir, { recursive: true });
-  await mkdir(dashboardRuntimeDir, { recursive: true });
-  await Promise.all([
-    writeFile(path.join(runtimeDir, "repair-state.json"), payload, "utf8"),
-    writeFile(dashboardStateFile, payload, "utf8"),
-    writeFile(sandboxStateFile, payload, "utf8"),
-  ]);
+  await writeFile(path.join(runtimeDir, "repair-state.json"), payload, "utf8");
 }
 
 async function emitStage(
@@ -443,8 +436,8 @@ async function captureEvidence(page: Page, config: RunConfig): Promise<FlowCaptu
 }
 
 async function captureScreenshot(page: Page, filename: string) {
-  await mkdir(dashboardRuntimeDir, { recursive: true });
-  const destination = path.join(dashboardRuntimeDir, filename);
+  await mkdir(runtimeAssetsDir, { recursive: true });
+  const destination = path.join(runtimeAssetsDir, filename);
   await page.screenshot({ path: destination, fullPage: true });
   return `/runtime/${filename}`;
 }
@@ -525,7 +518,10 @@ async function driveRepairFromEvidence(
     currentUrl,
   });
 
-  const appliedEditsPreview = await previewProposedEdits(config, proposal.patches);
+  const { patches: appliedEditsPreview } = await previewProposedEdits(config, proposal.patches);
+  if (appliedEditsPreview.length === 0) {
+    throw new Error(`No valid patches after preview: ${proposal.patches.length} proposed, all skipped due to mismatches`);
+  }
 
   const pendingPatch: PendingPatch = {
     id: `patch_${Date.now()}`,
@@ -563,7 +559,7 @@ async function driveRepairFromEvidence(
       config,
       run,
       "awaiting_approval",
-      "Patch proposal is waiting for explicit approval in the dashboard.",
+      "Patch proposal is waiting for explicit approval in the overlay.",
       hooks,
       {
         evidence,
@@ -595,7 +591,10 @@ async function driveRepairFromEvidence(
     return { continued: false, patchSummary: null, regressionChecks: proposal.regressionChecks };
   }
 
-  const appliedEdits = await applyProposedEdits(config, pendingPatch.edits);
+  const { patches: appliedEdits } = await applyProposedEdits(config, pendingPatch.edits);
+  if (appliedEdits.length === 0) {
+    throw new Error(`No patches applied: All skipped due to mismatches`);
+  }
   pendingPatch.edits = appliedEdits;
 
   await emitStage(

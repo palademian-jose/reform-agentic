@@ -6,6 +6,7 @@ import { detectFramework } from "./frameworkDetection";
 
 const allowedExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".json", ".html", ".css"]);
 const ignoredDirs = new Set(["node_modules", "dist", ".git", ".next", "coverage"]);
+const codeExtensions = [".tsx", ".ts", ".jsx", ".js"];
 
 async function walk(dir: string, results: string[]) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -25,6 +26,15 @@ async function walk(dir: string, results: string[]) {
     if (allowedExtensions.has(path.extname(entry.name))) {
       results.push(fullPath);
     }
+  }
+}
+
+async function pathExists(targetPath: string) {
+  try {
+    await stat(targetPath);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -161,6 +171,186 @@ function extractRelevantExcerpt(content: string, needles: string[], maxLength = 
   return parts.join("\n...\n").slice(0, maxLength);
 }
 
+function parseImportedIdentifiers(importClause: string) {
+  const identifiers: string[] = [];
+  const clause = importClause.trim().replace(/^type\s+/, "");
+
+  const defaultMatch = clause.match(/^([A-Za-z_$][\w$]*)/);
+  if (defaultMatch && defaultMatch[1] !== "{" && defaultMatch[1] !== "*") {
+    identifiers.push(defaultMatch[1]);
+  }
+
+  const namespaceMatch = clause.match(/\*\s+as\s+([A-Za-z_$][\w$]*)/);
+  if (namespaceMatch?.[1]) {
+    identifiers.push(namespaceMatch[1]);
+  }
+
+  const namedMatch = clause.match(/\{([^}]+)\}/);
+  if (namedMatch?.[1]) {
+    for (const part of namedMatch[1].split(",")) {
+      const cleaned = part.trim().replace(/^type\s+/, "");
+      if (!cleaned) continue;
+      const alias = cleaned.split(/\s+as\s+/i).pop()?.trim();
+      if (alias) {
+        identifiers.push(alias);
+      }
+    }
+  }
+
+  return [...new Set(identifiers)];
+}
+
+function extractLocalImports(content: string) {
+  const imports: Array<{ source: string; identifiers: string[] }> = [];
+  const pattern = /import\s+([\s\S]*?)\s+from\s+["']([^"']+)["'];?/g;
+
+  for (const match of content.matchAll(pattern)) {
+    const clause = match[1]?.trim();
+    const source = match[2]?.trim();
+    if (!clause || !source || !source.startsWith(".")) continue;
+    imports.push({
+      source,
+      identifiers: parseImportedIdentifiers(clause),
+    });
+  }
+
+  return imports;
+}
+
+async function resolveLocalImportPath(importerAbsolutePath: string, importSource: string) {
+  const basePath = path.resolve(path.dirname(importerAbsolutePath), importSource);
+  const candidates = [
+    basePath,
+    ...codeExtensions.map((ext) => `${basePath}${ext}`),
+    ...codeExtensions.map((ext) => path.join(basePath, `index${ext}`)),
+  ];
+
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function extractRenderedComponentNames(content: string) {
+  const names = new Set<string>();
+  const patterns = [
+    /<([A-Z][A-Za-z0-9_]*)\b/g,
+    /Component\s*=\s*\{([A-Z][A-Za-z0-9_]*)\}/g,
+    /element\s*=\s*\{\s*<([A-Z][A-Za-z0-9_]*)\b/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of content.matchAll(pattern)) {
+      if (match[1]) {
+        names.add(match[1]);
+      }
+    }
+  }
+
+  return [...names];
+}
+
+function collectElementNeedles(element?: {
+  textContent?: string;
+  componentName?: string | null;
+  children?: Array<{ textContent: string }>;
+  descendants?: Array<{ textContent: string }>;
+}) {
+  return [
+    element?.componentName ?? "",
+    element?.textContent ?? "",
+    ...(element?.children || []).map((child) => child.textContent),
+    ...(element?.descendants || []).map((descendant) => descendant.textContent),
+  ].filter((value) => value && value.trim().length > 2);
+}
+
+export async function collectEditModeContextFiles(input: {
+  projectRoot: string;
+  primaryFilePath: string;
+  primaryContent: string;
+  focusedSnippet?: string;
+  currentUrl?: string;
+  element?: {
+    textContent?: string;
+    componentName?: string | null;
+    children?: Array<{ textContent: string }>;
+    descendants?: Array<{ textContent: string }>;
+  };
+  maxFiles?: number;
+  maxDepth?: number;
+}) {
+  const primaryAbsolutePath = path.isAbsolute(input.primaryFilePath)
+    ? input.primaryFilePath
+    : path.join(input.projectRoot, input.primaryFilePath);
+  const maxFiles = input.maxFiles ?? 6;
+  const maxDepth = input.maxDepth ?? 2;
+  const relatedFiles: Array<{ path: string; content: string }> = [];
+  const visited = new Set<string>([primaryAbsolutePath]);
+  const queue: Array<{ absolutePath: string; content: string; scopeContent: string; depth: number }> = [
+    {
+      absolutePath: primaryAbsolutePath,
+      content: input.primaryContent,
+      scopeContent: input.focusedSnippet?.trim() || input.primaryContent,
+      depth: 0,
+    },
+  ];
+  const extraNeedles = collectElementNeedles(input.element);
+
+  while (queue.length > 0 && relatedFiles.length < maxFiles) {
+    const current = queue.shift();
+    if (!current) break;
+
+    const imports = extractLocalImports(current.content);
+    const importMap = new Map<string, string>();
+
+    for (const entry of imports) {
+      const resolvedImportPath = await resolveLocalImportPath(current.absolutePath, entry.source);
+      if (!resolvedImportPath) continue;
+      for (const identifier of entry.identifiers) {
+        importMap.set(identifier, resolvedImportPath);
+      }
+    }
+
+    const renderedNames = extractRenderedComponentNames(current.scopeContent);
+    const fallbackNames =
+      current.depth === 0 && renderedNames.length === 0
+        ? [...importMap.keys()].filter((identifier) => /(route|page|screen|view|layout|content|body)/i.test(identifier))
+        : [];
+    const candidateNames = [...new Set([...renderedNames, ...fallbackNames])];
+
+    for (const name of candidateNames) {
+      const resolvedPath = importMap.get(name);
+      if (!resolvedPath || visited.has(resolvedPath)) continue;
+      visited.add(resolvedPath);
+
+      const content = await readFile(resolvedPath, "utf8");
+      const relativePath = path.relative(input.projectRoot, resolvedPath);
+      relatedFiles.push({
+        path: relativePath,
+        content: extractRelevantExcerpt(content, [name, ...extraNeedles], 8000),
+      });
+
+      if (current.depth + 1 < maxDepth) {
+        queue.push({
+          absolutePath: resolvedPath,
+          content,
+          scopeContent: content,
+          depth: current.depth + 1,
+        });
+      }
+
+      if (relatedFiles.length >= maxFiles) {
+        break;
+      }
+    }
+  }
+
+  return relatedFiles;
+}
+
 export async function inferLikelyRoutesForTarget(projectRoot: string, target: string, label?: string) {
   const files: string[] = [];
   await walk(projectRoot, files);
@@ -254,17 +444,23 @@ export async function collectCandidateFiles(config: RunConfig, evidence: Evidenc
     }));
 }
 
-export async function applyProposedEdits(config: RunConfig, patches: ProposedFilePatch[]) {
+export async function applyProposedEdits(
+  config: RunConfig,
+  patches: ProposedFilePatch[],
+): Promise<{ applied: number; skipped: number; patches: ProposedFilePatch[] }> {
   const applied: ProposedFilePatch[] = [];
+  let skipped = 0;
 
-  for (const patch of patches) {
+  for (let i = 0; i < patches.length; i++) {
+    const patch = patches[i];
     const absolutePath = path.isAbsolute(patch.filePath)
       ? patch.filePath
       : path.join(config.projectRoot, patch.filePath);
     const current = await readFile(absolutePath, "utf8");
 
     if (!current.includes(patch.before)) {
-      throw new Error(`Expected snippet not found in ${patch.filePath}`);
+      skipped += 1;
+      continue;
     }
 
     const next = current.replace(patch.before, patch.after);
@@ -276,20 +472,28 @@ export async function applyProposedEdits(config: RunConfig, patches: ProposedFil
     });
   }
 
-  return applied;
+  console.log(`Applied ${applied.length} patches, skipped ${skipped} due to mismatches`);
+
+  return { applied: applied.length, skipped, patches: applied };
 }
 
-export async function previewProposedEdits(config: RunConfig, patches: ProposedFilePatch[]) {
+export async function previewProposedEdits(
+  config: RunConfig,
+  patches: ProposedFilePatch[],
+): Promise<{ applied: number; skipped: number; patches: ProposedFilePatch[] }> {
   const preview: ProposedFilePatch[] = [];
+  let skipped = 0;
 
-  for (const patch of patches) {
+  for (let i = 0; i < patches.length; i++) {
+    const patch = patches[i];
     const absolutePath = path.isAbsolute(patch.filePath)
       ? patch.filePath
       : path.join(config.projectRoot, patch.filePath);
     const current = await readFile(absolutePath, "utf8");
 
     if (!current.includes(patch.before)) {
-      throw new Error(`Expected snippet not found in ${patch.filePath}`);
+      skipped += 1;
+      continue;
     }
 
     const next = current.replace(patch.before, patch.after);
@@ -299,7 +503,9 @@ export async function previewProposedEdits(config: RunConfig, patches: ProposedF
     });
   }
 
-  return preview;
+  console.log(`Previewed ${preview.length} patches, skipped ${skipped} due to mismatches`);
+
+  return { applied: preview.length, skipped, patches: preview };
 }
 
 export async function ensureProjectRoot(projectRoot: string) {
@@ -320,8 +526,11 @@ export async function scanProjectFramework(projectRoot: string): Promise<Framewo
 }
 
 export const __test__ = {
+  collectEditModeContextFiles,
   normalizeRouteLiteral,
   routeFileToPattern,
   isRouteBackedByProject,
   extractRelevantExcerpt,
+  extractRenderedComponentNames,
+  extractLocalImports,
 };

@@ -1,0 +1,12 @@
+{
+  "goal": "Submit a required form field empty and verify the validation error appears",
+  "browserActions": [
+    { "kind": "goto", "target": "/" },
+    { "kind": "fill", "target": "label:Email", "value": "user@example.com" },
+    { "kind": "click", "target": "role:button:Submit" },
+    { "kind": "wait_for_text", "target": "text:Required" }
+  ],
+  "regressionChecks": [
+    { "path": "/", "expectText": "Submit" }
+  ]
+}

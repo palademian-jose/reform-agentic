@@ -1,4 +1,4 @@
 # Shared
 
-Shared types and event contracts for dashboard updates, agent runs, and repair
+Shared types and event contracts for the Reform Overlay, agent runs, and repair
 state transitions live here.

@@ -1,8 +1,151 @@
+const ACTION_LABEL_PATTERNS = [
+  "add",
+  "add item",
+  "add product",
+  "add to cart",
+  "apply",
+  "back",
+  "buy",
+  "buy now",
+  "cancel",
+  "checkout",
+  "close",
+  "collapse",
+  "confirm",
+  "continue",
+  "create",
+  "delete",
+  "download",
+  "edit",
+  "expand",
+  "filter",
+  "go to cart",
+  "log in",
+  "log out",
+  "next",
+  "open",
+  "pause",
+  "place order",
+  "play",
+  "proceed to checkout",
+  "purchase",
+  "remove",
+  "retry",
+  "save",
+  "search",
+  "send",
+  "sign in",
+  "sign out",
+  "sign up",
+  "sort",
+  "start",
+  "stop",
+  "submit",
+  "update",
+  "upload",
+  "view",
+];
+
+const ACTION_FUNCTION_HINTS = [
+  "add",
+  "apply",
+  "cart",
+  "checkout",
+  "delete",
+  "download",
+  "filter",
+  "login",
+  "logout",
+  "order",
+  "purchase",
+  "remove",
+  "retry",
+  "save",
+  "search",
+  "signup",
+  "sort",
+  "submit",
+  "upload",
+];
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getNormalizedFlowLabel(text: string) {
+  return String(text || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF]/gu, " ")
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function buildActionText(primaryText: string, ariaLabel = "", title = "", fallback = "") {
+  const uniqueParts: string[] = [];
+  const seenParts = new Set<string>();
+
+  for (const rawPart of [primaryText, ariaLabel, title]) {
+    const part = String(rawPart || "").trim();
+    const normalized = getNormalizedFlowLabel(part);
+    if (!normalized || seenParts.has(normalized)) continue;
+    seenParts.add(normalized);
+    uniqueParts.push(part);
+  }
+
+  const combined = uniqueParts.join(" ").replace(/\s+/g, " ").trim();
+  return (combined || String(fallback || "").trim()).slice(0, 180);
+}
+
+function getActionLabelText(
+  element: Pick<Element, "innerHTML"> & {
+    innerText?: string | null;
+    textContent?: string | null;
+    getAttribute(name: string): string | null;
+  },
+  fallback = "",
+) {
+  return buildActionText(
+    element?.innerText || element?.textContent || "",
+    element?.getAttribute("aria-label") || "",
+    element?.getAttribute("title") || "",
+    fallback,
+  );
+}
+
+function isLikelyActionLabel(text: string) {
+  const label = getNormalizedFlowLabel(text);
+  if (!label) return false;
+  return ACTION_LABEL_PATTERNS.some((pattern) => new RegExp(`\\b${escapeRegExp(pattern)}\\b`, "u").test(label));
+}
+
+function scoreFunctionCandidate(name: string) {
+  const lower = name.toLowerCase();
+  const normalized = getNormalizedFlowLabel(name);
+  let score = 0;
+  if (/^(handle|on|toggle|open|close|submit|click|save|add|remove|select|change|update|load|fetch|validate|set|get|render)/.test(lower)) score += 8;
+  if (/(button|form|input|menu|dialog|modal|nav|tab|page|route)/.test(lower)) score += 3;
+  if (ACTION_FUNCTION_HINTS.some((term) => new RegExp(`\\b${escapeRegExp(term)}\\b`, "u").test(normalized))) score += 6;
+  if (name[0] === name[0]?.toUpperCase()) score -= 2;
+  return score;
+}
+
 export function renderOverlayScript(agentBaseUrl: string) {
   return `(() => {
   const AGENT_BASE_URL = ${JSON.stringify(agentBaseUrl)};
   const WS_URL = AGENT_BASE_URL.replace(/^http/, "ws");
   const STORAGE_KEY = "__REFORM_OVERLAY_STATE__";
+  const ACTION_LABEL_PATTERNS = ${JSON.stringify(ACTION_LABEL_PATTERNS)};
+  const ACTION_FUNCTION_HINTS = ${JSON.stringify(ACTION_FUNCTION_HINTS)};
+
+  ${escapeRegExp.toString()}
+  ${getNormalizedFlowLabel.toString()}
+  ${buildActionText.toString()}
+  ${getActionLabelText.toString()}
+  ${isLikelyActionLabel.toString()}
+  ${scoreFunctionCandidate.toString()}
 
   if (window.__REFORM_OVERLAY__) {
     window.__REFORM_OVERLAY__.open();
@@ -880,50 +1023,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
       color: rgba(255,255,255,0.72);
     }
     .reform-collapsed #reform-overlay-panel { display: none; }
-    #reform-approval-popout {
-      position: fixed;
-      right: 496px;
-      bottom: 24px;
-      width: min(360px, calc(100vw - 24px));
-      max-height: calc(100vh - 40px);
-      z-index: 2147483648;
-      pointer-events: none;
-      transition: right 220ms ease, opacity 180ms ease, transform 180ms ease;
-    }
-    #reform-approval-popout[data-visible="false"] {
-      opacity: 0;
-      transform: translateY(8px);
-    }
-    #reform-approval-popout[data-visible="true"] {
-      opacity: 1;
-      transform: translateY(0);
-    }
-    .reform-popout-shell {
-      pointer-events: auto;
-      border-radius: 24px;
-      overflow: hidden;
-      background:
-        radial-gradient(circle at top right, rgba(255, 189, 96, 0.16), transparent 34%),
-        rgba(13, 17, 26, 0.96);
-      border: 1px solid rgba(255,255,255,0.08);
-      box-shadow: 0 24px 72px rgba(0,0,0,0.38);
-      backdrop-filter: blur(16px);
-    }
-    .reform-popout-head {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 16px 16px 14px;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-    }
-    .reform-popout-body {
-      display: grid;
-      gap: 12px;
-      padding: 14px 16px 16px;
-      max-height: calc(100vh - 110px);
-      overflow: auto;
-    }
     .reform-toggle {
       position: fixed;
       right: 24px;
@@ -960,12 +1059,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
         min-width: 0;
         height: min(760px, calc(100vh - 24px));
         max-height: calc(100vh - 24px);
-      }
-      #reform-approval-popout {
-        left: 12px;
-        right: 12px;
-        bottom: 162px;
-        width: auto;
       }
       .reform-summary-grid {
         grid-template-columns: 1fr;
@@ -1171,7 +1264,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
             </div>
             <div class="reform-field">
               <label for="reform-llm-model">Model</label>
-              <input id="reform-llm-model" class="reform-input" placeholder="x-ai/grok-4-fast" />
+              <input id="reform-llm-model" class="reform-input" placeholder="Model from REFORM_LLM_MODEL or x-ai/grok-4.20-beta" />
             </div>
           </div>
           <div class="reform-helper">Fallback is fixed to z.ai.</div>
@@ -1213,30 +1306,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
     </div>
   \`;
   document.body.appendChild(root);
-
-  const approvalPopout = document.createElement("div");
-  approvalPopout.id = "reform-approval-popout";
-  approvalPopout.dataset.visible = "false";
-  approvalPopout.innerHTML = \`
-    <div class="reform-popout-shell">
-      <div class="reform-popout-head">
-        <div>
-          <div class="reform-title">Approval Needed</div>
-          <div class="reform-subtitle">A patch proposal is waiting for a decision. This panel stays separate so approval requests are harder to miss.</div>
-        </div>
-        <div class="reform-badge" data-tone="warn">Pending</div>
-      </div>
-      <div class="reform-popout-body">
-        <div class="reform-callout" id="reform-popout-summary">No pending patch.</div>
-        <div class="reform-approval">
-          <button class="reform-button" id="reform-popout-approve-button">Approve Patch</button>
-          <button class="reform-button-ghost" id="reform-popout-reject-button">Reject Patch</button>
-        </div>
-        <div class="reform-diff-list" id="reform-popout-diff-list"></div>
-      </div>
-    </div>
-  \`;
-  document.body.appendChild(approvalPopout);
 
   const successBurst = document.createElement("div");
   successBurst.id = "reform-success-burst";
@@ -1291,10 +1360,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
     diffList: root.querySelector("#reform-diff-list"),
     approveButton: root.querySelector("#reform-approve-button"),
     rejectButton: root.querySelector("#reform-reject-button"),
-    popoutSummary: approvalPopout.querySelector("#reform-popout-summary"),
-    popoutDiffList: approvalPopout.querySelector("#reform-popout-diff-list"),
-    popoutApproveButton: approvalPopout.querySelector("#reform-popout-approve-button"),
-    popoutRejectButton: approvalPopout.querySelector("#reform-popout-reject-button"),
     logList: root.querySelector("#reform-log-list"),
     regressions: root.querySelector("#reform-regressions"),
   };
@@ -1539,7 +1604,9 @@ export function renderOverlayScript(agentBaseUrl: string) {
       const parsed = JSON.parse(els.config.value || "{}");
       parsed.llmProvider = els.llmProvider.value || "openrouter";
       parsed.llmFallbackProvider = "zai";
-      parsed.model = els.llmModel.value.trim() || parsed.model || "x-ai/grok-4-fast";
+      // Use the model from input, or existing parsed.model (which came from server config with REFORM_LLM_MODEL)
+      // The hardcoded fallback should match config.ts default
+      parsed.model = els.llmModel.value.trim() || parsed.model || "x-ai/grok-4.20-beta";
       els.config.value = JSON.stringify(parsed, null, 2);
       state.configText = els.config.value;
       validateConfigEditor();
@@ -1550,6 +1617,12 @@ export function renderOverlayScript(agentBaseUrl: string) {
   }
 
   function createRunRecord(config, stage, detail, options = {}) {
+    const maxRetries =
+      typeof options.maxRetries === "number"
+        ? options.maxRetries
+        : typeof config?.maxRetries === "number"
+          ? config.maxRetries
+          : 3;
     return {
       active: true,
       awaitingPatchedRetry: options.awaitingPatchedRetry ?? false,
@@ -1563,7 +1636,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
           stage,
           summary: detail,
           retryCount: options.retryCount ?? 1,
-          maxRetries: options.maxRetries ?? 3,
+          maxRetries,
         },
         config,
         stage,
@@ -1610,7 +1683,11 @@ export function renderOverlayScript(agentBaseUrl: string) {
       evidence: options.evidence ?? state.localRun?.snapshot?.evidence,
       regressions: options.regressions ?? state.localRun?.snapshot?.regressions,
       retryCount: options.retryCount ?? state.localRun?.snapshot?.run?.retryCount ?? 1,
-      maxRetries: options.maxRetries ?? state.localRun?.snapshot?.run?.maxRetries ?? 3,
+      maxRetries:
+        options.maxRetries ??
+        state.localRun?.snapshot?.run?.maxRetries ??
+        currentConfig?.maxRetries ??
+        3,
     });
     state.localRun.snapshot.run.summary = detail;
     persistOverlayState();
@@ -1621,7 +1698,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
     setLocalRunStage(stage, detail, options);
     if (state.localRun) {
       state.localRun.active = false;
-      state.localRun.awaitingPatchedRetry = false;
+      state.localRun.awaitingPatchedRetry = options.awaitingPatchedRetry ?? false;
       persistOverlayState();
       renderState();
     }
@@ -2037,15 +2114,21 @@ export function renderOverlayScript(agentBaseUrl: string) {
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Local same-tab run failed.";
       const evidence = collectLocalEvidence(error);
+      let agentStarted = false;
       pushLocalLog("error", reason);
-      await escalateFailureToAgent(config, evidence, reason).catch((agentError) => {
-        pushLocalLog(
-          "error",
-          agentError instanceof Error ? agentError.message : "Could not start the agent repair loop after local failure.",
-        );
-      });
+      await escalateFailureToAgent(config, evidence, reason)
+        .then(() => {
+          agentStarted = true;
+        })
+        .catch((agentError) => {
+          pushLocalLog(
+            "error",
+            agentError instanceof Error ? agentError.message : "Could not start the agent repair loop after local failure.",
+          );
+        });
       completeLocalRun("needs_review", reason, {
         evidence,
+        awaitingPatchedRetry: agentStarted,
       });
     }
   }
@@ -2059,7 +2142,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
     state.localRun = createRunRecord(config, "observing", "Preparing same-tab playback in the current browser.", {
       nextIndex: 0,
       retryCount: nextRetryCount,
-      maxRetries: state.localRun?.snapshot?.run?.maxRetries ?? 3,
+      maxRetries: config?.maxRetries ?? state.localRun?.snapshot?.run?.maxRetries ?? 3,
       awaitingPatchedRetry: false,
     });
     persistOverlayState();
@@ -2311,7 +2394,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
     applyEditModeVisuals(state.editModeEnabled);
     toggle.dataset.open = collapsed ? "false" : "true";
     toggle.textContent = "Reform";
-    updateApprovalPopoutPosition();
     persistOverlayState();
   }
 
@@ -2328,23 +2410,18 @@ export function renderOverlayScript(agentBaseUrl: string) {
     root.style.width = desiredWidth + "px";
   }
 
-  function updateApprovalPopoutPosition() {
-    if (window.innerWidth <= 640) {
-      approvalPopout.style.right = "";
-      return;
-    }
-
-    const overlayWidth = state.collapsed ? 0 : Math.max(460, Math.round(root.getBoundingClientRect().width || 460));
-    approvalPopout.style.right = (overlayWidth + 36) + "px";
-  }
-
   function applyHighlight(selector) {
     if (state.selectedElement) {
       state.selectedElement.classList.remove("reform-highlight");
       state.selectedElement = null;
     }
     if (!selector) return;
-    const element = document.querySelector(selector);
+    let element = document.querySelector(selector);
+  if (!element && selector.toLowerCase().includes('container') || selector.startsWith('role:region') || selector.startsWith('role:grid')) {
+    // Fallback for containers: target common layout elements
+    element = document.querySelector('[role=\"region\"], [role=\"grid\"], .grid, .flex, [class*=\"container\"]');
+    if (element) console.log('Fallback to container selector:', element);
+  }
     if (element) {
       element.classList.add("reform-highlight");
       state.selectedElement = element;
@@ -2480,7 +2557,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
       attributes[attr.name] = attr.value;
     }
 
-    const textContent = (element.innerText || element.textContent || "").trim().replace(/\\s+/g, " ").slice(0, 180);
+    const textContent = getActionLabelText(element);
     return {
       tagName: element.tagName,
       id: element.id || null,
@@ -2517,61 +2594,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
     return false;
   }
 
-  function getNormalizedFlowLabel(text) {
-    return String(text || "")
-      .replace(/\\s+/g, " ")
-      .replace(/[\\u{1F300}-\\u{1FAFF}\\u2600-\\u27BF]/gu, "")
-      .trim()
-      .toLowerCase();
-  }
-
-  function isLikelyActionLabel(text) {
-    const label = getNormalizedFlowLabel(text);
-    if (!label) return false;
-
-    const actionPatterns = [
-      /\\badd\\b/,
-      /\\bremove\\b/,
-      /\\bbuy\\b/,
-      /\\bcheckout\\b/,
-      /\\bsubmit\\b/,
-      /\\bsave\\b/,
-      /\\bcontinue\\b/,
-      /\\bnext\\b/,
-      /\\bback\\b/,
-      /\\bconfirm\\b/,
-      /\\bcancel\\b/,
-      /\\bedit\\b/,
-      /\\bdelete\\b/,
-      /\\bupdate\\b/,
-      /\\bsearch\\b/,
-      /\\bfilter\\b/,
-      /\\bsort\\b/,
-      /\\bopen\\b/,
-      /\\bclose\\b/,
-      /\\bview\\b/,
-      /\\blog in\\b/,
-      /\\blog out\\b/,
-      /\\bsign in\\b/,
-      /\\bsign up\\b/,
-      /\\bcreate\\b/,
-      /\\bapply\\b/,
-      /\\bsend\\b/,
-      /\\bdownload\\b/,
-      /\\bupload\\b/,
-      /\\bretry\\b/,
-      /\\bstart\\b/,
-      /\\bstop\\b/,
-      /\\bplay\\b/,
-      /\\bpause\\b/,
-      /\\bexpand\\b/,
-      /\\bcollapse\\b/,
-      /\\badd to cart\\b/,
-      /\\bgo to cart\\b/,
-    ];
-
-    return actionPatterns.some((pattern) => pattern.test(label));
-  }
 
   function isLikelyRepresentativeAction(element, label) {
     const normalized = getNormalizedFlowLabel(label);
@@ -2615,11 +2637,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
       for (const match of content.matchAll(pattern)) {
         if (!match[1]) continue;
         const name = match[1];
-        const lower = name.toLowerCase();
-        let score = 0;
-        if (/^(handle|on|toggle|open|close|submit|click|save|add|remove|select|change|update|load|fetch|validate|set|get|render|submit)/.test(lower)) score += 8;
-        if (/(button|form|input|menu|dialog|modal|nav|tab|page|route)/.test(lower)) score += 3;
-        if (name[0] === name[0]?.toUpperCase()) score -= 2;
+        const score = scoreFunctionCandidate(name);
         const existing = names.get(name);
         if (!existing || score > existing.score) {
           names.set(name, { name, score });
@@ -2680,7 +2698,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
     const descriptor = buildElementDescriptor(element);
     if (!descriptor) return null;
 
-    const label = (element.innerText || element.textContent || descriptor.cssSelector || "Button").trim().replace(/\\s+/g, " ").slice(0, 120) || "Button";
+    const label = getActionLabelText(element, descriptor.cssSelector || "Button") || "Button";
     const payload = {
       element: descriptor,
       projectRoot: getProjectRootForScanning(),
@@ -2884,7 +2902,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
       if (seen.has(descriptor)) continue;
       seen.add(descriptor);
 
-      const label = (element.innerText || element.textContent || descriptor).trim().slice(0, 120);
+      const label = getActionLabelText(element, descriptor);
       if (!isLikelyRepresentativeAction(element, label) && !element.closest("form")) {
         continue;
       }
@@ -2929,13 +2947,13 @@ export function renderOverlayScript(agentBaseUrl: string) {
         actions.push({
           kind: "fill",
           target: descriptor,
-          value: input.getAttribute("placeholder") || input.getAttribute("name") || "demo",
+          value: input.getAttribute("placeholder") || input.getAttribute("name") || "sample",
         });
       }
       actions.push({ kind: "click", target: submitDescriptor });
 
       suggestions.push({
-        title: "Form submit: " + ((submit.innerText || submit.textContent || "submit").trim()),
+        title: "Form submit: " + getActionLabelText(submit, "submit"),
         description: "Fill visible fields and submit the form.",
         actions,
         sourceFile: "Current page",
@@ -2943,7 +2961,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
         confidence: null,
         functions: [],
         steps: [
-          { title: "Fill the form", copy: "Populate the visible fields with demo input." },
+          { title: "Fill the form", copy: "Populate the visible fields with sample input." },
           { title: "Submit the form", copy: "Trigger the submit control on the page." },
           { title: "Verify the outcome", copy: "Confirm the navigation, message, or state update." },
         ],
@@ -2970,7 +2988,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
 
     const labelCounts = new Map();
     for (const element of rawCandidates) {
-      const label = (element.innerText || element.textContent || element.getAttribute("aria-label") || element.getAttribute("title") || "").trim();
+      const label = getActionLabelText(element);
       if (!isLikelyRepresentativeAction(element, label)) {
         continue;
       }
@@ -2981,7 +2999,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
 
     const seenLabels = new Set();
     const buttons = rawCandidates.filter((element) => {
-      const label = (element.innerText || element.textContent || element.getAttribute("aria-label") || element.getAttribute("title") || "").trim();
+      const label = getActionLabelText(element);
       if (!isLikelyRepresentativeAction(element, label)) {
         return false;
       }
@@ -2996,7 +3014,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
     const suggestions = [];
     for (const [index, element] of buttons.entries()) {
       try {
-        const label = (element.innerText || element.textContent || element.getAttribute("aria-label") || element.getAttribute("title") || "").trim();
+        const label = getActionLabelText(element);
         const count = labelCounts.get(getNormalizedFlowLabel(label)) || 1;
         const suggestion = await resolveButtonFlowSuggestion(element, index);
         if (scanId !== suggestionScanSerial) return;
@@ -3120,21 +3138,14 @@ export function renderOverlayScript(agentBaseUrl: string) {
 
     if (!state.pendingPatch && !showLoadingApproval) {
       els.approvalSection.style.display = "none";
-      approvalPopout.dataset.visible = "false";
-      els.popoutSummary.textContent = "No pending patch.";
-      els.popoutDiffList.innerHTML = "";
       return;
     }
 
     if (showLoadingApproval) {
       els.approvalSection.style.display = "";
-      approvalPopout.dataset.visible = "true";
       els.patchRationale.textContent = "Preparing review package from the latest evidence.";
-      els.popoutSummary.textContent = "Preparing review package from the latest evidence.";
       els.approveButton.disabled = true;
       els.rejectButton.disabled = true;
-      els.popoutApproveButton.disabled = true;
-      els.popoutRejectButton.disabled = true;
       els.diffList.innerHTML = \`
         <div class="reform-loading-card">
           <div class="reform-skeleton reform-skeleton-line" data-width="full"></div>
@@ -3142,23 +3153,13 @@ export function renderOverlayScript(agentBaseUrl: string) {
           <div class="reform-skeleton reform-skeleton-diff"></div>
         </div>
       \`;
-      els.popoutDiffList.innerHTML = \`
-        <div class="reform-loading-card">
-          <div class="reform-skeleton reform-skeleton-line" data-width="mid"></div>
-          <div class="reform-skeleton reform-skeleton-diff"></div>
-        </div>
-      \`;
       return;
     }
 
     els.approvalSection.style.display = "";
-    approvalPopout.dataset.visible = "true";
     els.approveButton.disabled = false;
     els.rejectButton.disabled = false;
-    els.popoutApproveButton.disabled = false;
-    els.popoutRejectButton.disabled = false;
     els.patchRationale.textContent = state.pendingPatch.rationale + " Confidence: " + state.pendingPatch.confidence;
-    els.popoutSummary.textContent = state.pendingPatch.rationale + " Confidence: " + state.pendingPatch.confidence;
     els.diffList.innerHTML = state.pendingPatch.edits.map((edit) => \`
       <div class="reform-diff">
         <strong>\${escapeHtml(edit.filePath)}</strong>
@@ -3166,13 +3167,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
         <pre>\${escapeHtml(edit.diff)}</pre>
       </div>
     \`).join("");
-    els.popoutDiffList.innerHTML = state.pendingPatch.edits.map((edit) => \`
-      <div class="reform-diff">
-        <strong>\${escapeHtml(edit.filePath)}</strong>
-        <div>\${escapeHtml(edit.reason)}</div>
-      </div>
-    \`).join("");
-    updateApprovalPopoutPosition();
   }
 
   function renderState() {
@@ -3242,7 +3236,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
     renderRecorder();
     renderSuggestions();
     updateOverlayWidth();
-    updateApprovalPopoutPosition();
   }
 
   async function getHealth() {
@@ -3419,14 +3412,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
     await postJson("/reject");
   });
 
-  els.popoutApproveButton.addEventListener("click", async () => {
-    await postJson("/approve");
-  });
-
-  els.popoutRejectButton.addEventListener("click", async () => {
-    await postJson("/reject");
-  });
-
   let socket = null;
   let reconnectTimer = null;
   let manualSocketClose = false;
@@ -3481,6 +3466,7 @@ export function renderOverlayScript(agentBaseUrl: string) {
           state.pendingPatch = null;
         }
         if (
+          message.payload.config?.autoRetestLocal &&
           state.localRun?.awaitingPatchedRetry &&
           message.payload.stage === "needs_review" &&
           /Patch applied from captured same-tab failure evidence/i.test(message.payload.detail || "")
@@ -3495,6 +3481,14 @@ export function renderOverlayScript(agentBaseUrl: string) {
             state.localRun.awaitingPatchedRetry = false;
             pushLocalLog("warn", "local_runner_retry_limit: Reached the maximum same-tab replay attempts after patching.");
           }
+        } else if (
+          !message.payload.config?.autoRetestLocal &&
+          state.localRun?.awaitingPatchedRetry &&
+          message.payload.stage === "needs_review" &&
+          /Patch applied from captured same-tab failure evidence/i.test(message.payload.detail || "")
+        ) {
+          state.localRun.awaitingPatchedRetry = false;
+          pushLocalLog("info", "local_runner_retry_disabled: Auto retry after repair is disabled in the run config.");
         }
         if (message.payload.stage === "verified" && message.payload.stage !== previousStage) {
           triggerSuccessBurst();
@@ -3549,7 +3543,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
   maybeResumeLocalRun();
   const handleResize = () => {
     updateOverlayWidth();
-    updateApprovalPopoutPosition();
   };
   window.addEventListener("resize", handleResize);
 
@@ -3576,7 +3569,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
       if (state.selectedElement) state.selectedElement.classList.remove("reform-highlight");
       persistOverlayState();
       root.remove();
-      approvalPopout.remove();
       toggle.remove();
       style.remove();
       delete window.__REFORM_OVERLAY__;
@@ -3584,7 +3576,6 @@ export function renderOverlayScript(agentBaseUrl: string) {
   };
   setCollapsed(state.collapsed);
   updateOverlayWidth();
-  updateApprovalPopoutPosition();
   renderEditToggle();
   applyEditModeVisuals(state.editModeEnabled);
   if (state.editModeEnabled) {
@@ -3597,3 +3588,12 @@ export function renderOverlayScript(agentBaseUrl: string) {
   }
 })();`;
 }
+
+export const __test__ = {
+  ACTION_LABEL_PATTERNS,
+  buildActionText,
+  getActionLabelText,
+  getNormalizedFlowLabel,
+  isLikelyActionLabel,
+  scoreFunctionCandidate,
+};

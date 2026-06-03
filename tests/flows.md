@@ -1,11 +1,11 @@
 # Browser Flow Ideas
 
-## Signup
+## Account Flow
 
 - open `/`
-- fill name and email
-- click `Sign Up`
-- expect redirect to `/dashboard`
+- open the account or navigation menu
+- select the primary destination
+- verify the route or page content updates
 
 ## Navigation
 

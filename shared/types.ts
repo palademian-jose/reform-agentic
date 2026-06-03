@@ -58,6 +58,8 @@ export interface RunConfig {
   projectRoot: string;
   appUrl: string;
   requireApproval: boolean;
+  autoRetestLocal: boolean;
+  maxRetries: number;
   llmProvider: LlmProvider;
   llmFallbackProvider: LlmProvider | null;
   model: string;
@@ -150,11 +152,30 @@ export interface ElementDescriptor {
   id: string | null;
   className: string;
   textContent: string;
+  innerHTML?: string;
+  outerHTML?: string;
   attributes: Record<string, string>;
   boundingBox: { x: number; y: number; width: number; height: number };
   componentName: string | null;
   parentComponentNames: string[];
   cssSelector: string;
+  children?: Array<{
+    tagName: string;
+    id: string | null;
+    className: string;
+    textContent: string;
+    attributes: Record<string, string>;
+  }>;
+  descendants?: Array<{
+    tagName: string;
+    id: string | null;
+    className: string;
+    textContent: string;
+    depth: number;
+    attributes: Record<string, string>;
+  }>;
+  childCount?: number;
+  totalDescendants?: number;
 }
 
 export interface EditModeRequest {

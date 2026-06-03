@@ -6,9 +6,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
 
 export const defaultRunConfig: RunConfig = {
-  goal: "Sign up and reach dashboard",
-  projectRoot: path.join(rootDir, "sandbox-app"),
-  appUrl: process.env.REFORM_APP_URL ?? "http://127.0.0.1:4173",
+  autoRetestLocal: true,
+  maxRetries: 3,
+  goal: "Verify the primary user flow in the target app",
+  projectRoot: path.resolve(process.env.REFORM_PROJECT_ROOT ?? rootDir),
+  appUrl: process.env.REFORM_APP_URL ?? "http://127.0.0.1:3000",
   requireApproval: true,
   llmProvider: (process.env.REFORM_LLM_PROVIDER ?? "openrouter") as RunConfig["llmProvider"],
   llmFallbackProvider: "zai",
@@ -21,14 +23,10 @@ export const defaultRunConfig: RunConfig = {
   },
   browserActions: [
     { kind: "goto", target: "/" },
-    { kind: "fill", target: "label:Full name", value: "Jamie Torres" },
-    { kind: "fill", target: "label:School email", value: "jamie@school.edu" },
-    { kind: "click", target: "role:button:Sign Up" },
-    { kind: "wait_for_text", target: "text:Missing required field `name`." },
+    { kind: "click", target: "button" },
   ],
   regressionChecks: [
-    { path: "/", expectText: "Create account" },
-    { path: "/dashboard", expectText: "Welcome to the dashboard" },
+    { path: "/" },
   ],
 };
 

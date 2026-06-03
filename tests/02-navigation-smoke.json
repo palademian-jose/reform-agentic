@@ -1,0 +1,13 @@
+{
+  "goal": "Navigate from the landing page to a primary destination and verify the content loads",
+  "browserActions": [
+    { "kind": "goto", "target": "/" },
+    { "kind": "click", "target": "text:Open profile" },
+    { "kind": "wait_for_url", "target": "profile" },
+    { "kind": "wait_for_text", "target": "text:Profile" }
+  ],
+  "regressionChecks": [
+    { "path": "/", "expectText": "Open profile" },
+    { "path": "/profile", "expectText": "Profile" }
+  ]
+}

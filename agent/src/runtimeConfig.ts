@@ -9,6 +9,10 @@ const rootDir = path.resolve(__dirname, "../..");
 const runtimeConfigPath = path.join(rootDir, "agent/runtime/launch-config.json");
 
 export async function loadRuntimeConfig() {
+  if (process.env.REFORM_IGNORE_RUNTIME_CONFIG === "1") {
+    return null;
+  }
+
   try {
     const raw = await readFile(runtimeConfigPath, "utf8");
     return normalizeRunConfig(JSON.parse(raw) as Partial<RunConfig>);

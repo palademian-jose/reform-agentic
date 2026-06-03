@@ -15,11 +15,10 @@ function parseArgs(argv) {
     url: "",
     cmd: "",
     test: "",
-    goal: "Sign up and reach dashboard",
+    goal: "Verify the primary user flow in the target app",
     noApproval: false,
     noBrowser: false,
     noOpen: false,
-    dashboardPort: 5180,
     agentPort: 8787,
     proxyPort: 5190,
   };
@@ -48,12 +47,6 @@ function parseArgs(argv) {
 
     if (token === "--test" && next) {
       options.test = next;
-      index += 1;
-      continue;
-    }
-
-    if (token === "--dashboard-port" && next) {
-      options.dashboardPort = Number(next);
       index += 1;
       continue;
     }
@@ -299,9 +292,11 @@ async function buildTargetConfig(options, packageJson) {
     projectRoot: targetDir,
     appUrl,
     requireApproval: !options.noApproval,
+    autoRetestLocal: true,
+    maxRetries: 3,
     llmProvider: process.env.REFORM_LLM_PROVIDER || "openrouter",
     llmFallbackProvider: "zai",
-    model: process.env.REFORM_LLM_MODEL || process.env.REFORM_OPENROUTER_MODEL || "openai/gpt-4.1-mini",
+    model: process.env.REFORM_LLM_MODEL || process.env.REFORM_OPENROUTER_MODEL || "x-ai/grok-4.20-beta",
     visualPlayback: {
       headless: false,
       showCursor: true,
@@ -373,13 +368,11 @@ async function main() {
 
   const targetPort = initialTargetPort;
   const agentPort = findFreePort(options.agentPort);
-  const dashboardPort = findFreePort(options.dashboardPort);
   const proxyPort = findFreePort(options.proxyPort);
 
   targetConfig.appUrl = `http://127.0.0.1:${targetPort}`;
   await writeLaunchConfig(targetConfig);
 
-  const dashboardUrl = `http://127.0.0.1:${dashboardPort}`;
   const agentUrl = `http://127.0.0.1:${agentPort}`;
   const overlayUrl = `${agentUrl}/overlay.js`;
   const proxyUrl = `http://127.0.0.1:${proxyPort}`;
@@ -387,7 +380,6 @@ async function main() {
   console.log(`Starting Reform for ${targetDir}`);
   console.log(`Target app: ${targetConfig.appUrl}`);
   console.log(`Agent API: ${agentUrl}`);
-  console.log(`Dashboard: ${dashboardUrl}`);
   console.log(`Proxy URL: ${proxyUrl}`);
   console.log(`Overlay script: ${overlayUrl}`);
   if (options.noBrowser) {
@@ -437,17 +429,6 @@ async function main() {
         REFORM_APP_URL: targetConfig.appUrl,
       },
       label: "agent",
-    }),
-  );
-
-  children.push(
-    spawnManaged("npm", ["run", "--workspace", "@reform/dashboard", "dev", "--", "--host", "127.0.0.1", "--port", String(dashboardPort), "--strictPort"], {
-      cwd: reformRoot,
-      env: {
-        ...process.env,
-        VITE_AGENT_API_URL: agentUrl,
-      },
-      label: "dashboard",
     }),
   );
 

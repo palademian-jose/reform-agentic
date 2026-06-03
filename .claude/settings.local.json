@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(find /home/deimos/Projects/Reform/.claude/worktrees/agent-acbdec29/tests -name *.ts -type f)",
+      "Bash(npm run:*)",
+      "Bash(node:*)",
+      "Bash(ls -la /home/deimos/Projects/Reform/*.json)"
     ]
   }
 }

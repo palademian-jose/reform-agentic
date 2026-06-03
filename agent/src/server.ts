@@ -10,12 +10,12 @@ import { resolveElementToFile } from "./elementResolver";
 import { proposeElementEditWithLlm } from "./llm";
 import { renderEditModeScript } from "./editModeScript";
 import { renderOverlayScript } from "./overlayScript";
-import { inferLikelyRoutesForTarget, scanProjectFramework } from "./project";
+import { collectEditModeContextFiles, inferLikelyRoutesForTarget, scanProjectFramework } from "./project";
 import { initializeRepairState, runRepairFromLocalFailure, runRepairLoop } from "./repairLoop";
 import { loadRuntimeConfig } from "./runtimeConfig";
 
 const port = Number(process.env.REFORM_AGENT_PORT ?? "8787");
-const runtimeAssetsDir = path.resolve(new URL("../runtime", import.meta.url).pathname, "../../dashboard/public/runtime");
+const runtimeAssetsDir = path.resolve(new URL("../runtime/assets", import.meta.url).pathname);
 
 let activeRun: Promise<void> | null = null;
 let latestSnapshot: RepairStateSnapshot | null = null;
@@ -117,11 +117,25 @@ async function processEditProposal(
       lineNumber: resolved.lineNumber ?? undefined,
     });
 
+    const relatedFiles = await collectEditModeContextFiles({
+      projectRoot: body.projectRoot,
+      primaryFilePath: resolved.filePath,
+      primaryContent: resolved.content,
+      focusedSnippet: resolved.focusedSnippet,
+      currentUrl: body.currentUrl,
+      element: body.element,
+    });
+
     const result = await proposeElementEditWithLlm({
       config,
       element: body.element,
       fileContent: resolved.content,
       filePath: resolved.filePath,
+      relatedFiles,
+      lineNumber: resolved.lineNumber,
+      focusedSnippet: resolved.focusedSnippet,
+      focusedStartLine: resolved.focusedStartLine,
+      focusedEndLine: resolved.focusedEndLine,
       customPrompt: body.customPrompt || null,
       currentUrl: body.currentUrl || "",
       framework: cachedFramework,
@@ -144,25 +158,66 @@ async function processEditProposal(
     // Read files and compute diffs — do NOT write to disk yet
     await populateBackups(proposalId);
     setSessionProjectRoot(proposalId, body.projectRoot);
-    for (const patch of result.patches) {
-      const absolutePath = path.isAbsolute(patch.filePath)
-        ? patch.filePath
-        : path.join(body.projectRoot, patch.filePath);
-      const originalContent = await readFile(absolutePath, "utf8");
+    let appliedPatches = 0;
+    let skippedPatches = 0;
+    for (let i = 0; i < result.patches.length; i++) {
+      const patch = result.patches[i];
+      let normalizedFilePath = patch.filePath;
+      let absolutePath = path.isAbsolute(normalizedFilePath)
+        ? normalizedFilePath
+        : path.join(body.projectRoot, normalizedFilePath);
+      let originalContent: string;
 
-      if (!originalContent.includes(patch.before)) continue;
+      try {
+        originalContent = await readFile(absolutePath, "utf8");
+      } catch {
+        if (resolved.content.includes(patch.before)) {
+          normalizedFilePath = resolved.filePath;
+          absolutePath = path.isAbsolute(normalizedFilePath)
+            ? normalizedFilePath
+            : path.join(body.projectRoot, normalizedFilePath);
+          originalContent = resolved.content;
+        } else {
+          skippedPatches++;
+          continue;
+        }
+      }
 
+      if (!originalContent.includes(patch.before)) {
+        console.log(`Skipped proposal patch ${i + 1}/${result.patches.length} in ${patch.filePath}: before snippet mismatch`);
+        skippedPatches++;
+        continue;
+      }
+
+      appliedPatches++;
       // Store backup for potential rollback
       storeBackup(proposalId, absolutePath, originalContent);
 
       const patchedContent = originalContent.replace(patch.before, patch.after);
       proposal.patches.push({
-        filePath: patch.filePath,
+        filePath: normalizedFilePath,
         before: patch.before,
         after: patch.after,
         reason: patch.reason,
-        diff: createUnifiedDiff(patch.filePath, originalContent, patchedContent),
+        diff: createUnifiedDiff(normalizedFilePath, originalContent, patchedContent),
       });
+    }
+
+    console.log(`Proposal for ${proposalId}: Applied ${appliedPatches}, skipped ${skippedPatches} patches`);
+
+    if (proposal.patches.length === 0) {
+      broadcast({
+        type: "edit_error",
+        payload: {
+          proposalId,
+          error:
+            skippedPatches > 0
+              ? "The generated edit did not match the current source files. Try a more specific prompt or reselect the element."
+              : "No usable edit proposal was generated for the selected element.",
+        },
+      });
+      clearSession(proposalId);
+      return;
     }
 
     setProposal(proposalId, proposal);

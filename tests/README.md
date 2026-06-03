@@ -12,16 +12,16 @@ Example:
 
 ```json
 {
-  "goal": "Log in and reach dashboard",
+  "goal": "Open the account menu and verify the profile page loads",
   "browserActions": [
     { "kind": "goto", "target": "/" },
-    { "kind": "fill", "target": "label:Email", "value": "user@example.com" },
-    { "kind": "click", "target": "role:button:Log In" },
-    { "kind": "wait_for_url", "target": "dashboard" }
+    { "kind": "click", "target": "role:button:Account" },
+    { "kind": "click", "target": "text:Profile" },
+    { "kind": "wait_for_url", "target": "profile" }
   ],
   "regressionChecks": [
-    { "path": "/", "expectText": "Log in" },
-    { "path": "/dashboard", "expectText": "Welcome" }
+    { "path": "/", "expectText": "Account" },
+    { "path": "/profile", "expectText": "Profile" }
   ]
 }
 ```
