@@ -2,3 +2,5 @@
 .env.*
 agent/runtime/
 dashboard/public/runtime/
+node_modules/
+.claude/
